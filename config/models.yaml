@@ -1,0 +1,34 @@
+version: 1
+defaults:
+  ollama_base_url: http://127.0.0.1:11434
+  offline_mode: true
+  telemetry: false
+  security_validation_required: true
+  request_timeout_seconds: 180
+models:
+  aegis:
+    primary: llama3.1:8b
+    fallback:
+      - llama3.2:3b
+    keep_alive: -1
+    vram_limit_mb: 7168
+    context_window: 8192
+    allow_remote_provider: false
+  specialist_default:
+    primary: llama3.2:3b
+    fallback:
+      - llama3.1:8b
+    keep_alive: 10m
+    vram_limit_mb: 4096
+    context_window: 4096
+    allow_remote_provider: false
+performance_thresholds:
+  maximum_response_time_ms: 180000
+  minimum_success_rate: 0.90
+  maximum_daily_tokens_per_agent: 500000
+  maximum_concurrent_models: 1
+privacy_validation:
+  require_localhost_endpoint: true
+  reject_client_data_in_prompt: true
+  log_model_access: true
+  reject_unknown_model_source: true

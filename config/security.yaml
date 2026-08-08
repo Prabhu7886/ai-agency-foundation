@@ -1,0 +1,88 @@
+version: 1
+ollama:
+  scheme: http
+  host: 127.0.0.1
+  port: 11434
+  allowed_bind_addresses:
+    - 127.0.0.1
+    - "::1"
+  reject_remote_hosts: true
+  offline_mode_default: true
+encryption:
+  algorithm: AES-256-GCM
+  key_environment_variable: AI_AGENCY_MASTER_KEY
+  sqlcipher_required: true
+  sqlcipher_page_size: 4096
+  sqlcipher_kdf_iterations: 256000
+  vector_store_requires_encrypted_volume: true
+  exports_encrypted_by_default: true
+vector_store:
+  implementation: chromadb
+  mode: embedded_only
+  server_enabled: false
+  network_port_allowed: false
+  accepted_advisory:
+    id: PYSEC-2026-311
+    alias: CVE-2026-45829
+    affected_component: unauthenticated_chromadb_http_server
+    rationale: The HTTP server is never started; only in-process PersistentClient is permitted.
+access_control:
+  default_security_clearance: standard
+  security_levels:
+    - public
+    - internal
+    - confidential
+    - restricted
+  deny_by_default: true
+  client_data_isolation: per_client_container
+  record_all_data_access: true
+audit:
+  daily_time: "02:00"
+  checks:
+    - sqlcipher_active
+    - master_key_present
+    - secret_files_gitignored
+    - client_isolation
+    - ollama_localhost_only
+    - outbound_connection_review
+    - telegram_whitelist
+    - backup_encryption
+    - vector_volume_encryption
+    - chromadb_embedded_only
+  alert_severity_threshold: high
+  retain_days: 365
+data_handling:
+  external_client_data_allowed: false
+  redact_secrets_in_logs: true
+  temporary_plaintext_cleanup_minutes: 15
+  permitted_external_schemes:
+    - https
+  permitted_research_domains:
+    - github.com
+    - api.github.com
+    - news.ycombinator.com
+    - hn.algolia.com
+    - reddit.com
+    - www.reddit.com
+    - export.arxiv.org
+    - arxiv.org
+    - producthunt.com
+    - www.producthunt.com
+mobile:
+  provider: telegram
+  token_environment_variable: TELEGRAM_BOT_TOKEN
+  allowed_user_ids_environment_variable: TELEGRAM_ALLOWED_USER_IDS
+  session_timeout_minutes: 30
+  maximum_commands_per_minute: 15
+  destructive_commands_require_confirmation: true
+backups:
+  destination: backups
+  encryption_required: true
+  verify_after_write: true
+  retain_daily: 14
+  retain_weekly: 8
+alerts:
+  outbound_connection_count_high: 25
+  failed_mobile_auth_high: 3
+  disk_usage_percent_high: 90
+  ram_usage_percent_high: 90

@@ -1,0 +1,59 @@
+version: 1
+timezone: America/Chicago
+active_hours:
+  aegis:
+    start: "00:00"
+    end: "23:59"
+  specialists:
+    start: "07:00"
+    end: "22:00"
+research:
+  ai_briefing:
+    frequency: daily
+    at: "06:30"
+  github_trending:
+    frequency: daily
+    at: "07:00"
+  competitor_scan:
+    frequency: weekly
+    weekday: monday
+    at: "08:00"
+  open_source_scan:
+    frequency: weekly
+    weekday: sunday
+    at: "08:00"
+  knowledge_consolidation:
+    frequency: daily
+    at: "23:15"
+security:
+  audit:
+    frequency: daily
+    at: "02:00"
+    priority: 0
+  outbound_review:
+    frequency: hourly
+    minute: 15
+  secret_scan:
+    frequency: daily
+    at: "02:30"
+maintenance:
+  start: "03:00"
+  end: "04:00"
+  tasks:
+    - database_integrity_check
+    - log_rotation
+    - stale_session_cleanup
+backups:
+  encrypted_daily:
+    at: "03:30"
+  encrypted_weekly:
+    weekday: sunday
+    at: "04:00"
+priority_rules:
+  security_incident: 0
+  emergency_shutdown: 0
+  client_delivery: 10
+  revenue_task: 20
+  intelligence_briefing: 30
+  research: 50
+  maintenance: 80
