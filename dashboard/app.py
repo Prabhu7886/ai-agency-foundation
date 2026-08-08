@@ -103,7 +103,13 @@ def render_overview(aegis: AegisOrchestrator) -> None:
     statuses = [aegis.report_status(), *[agent.report_status() for agent in aegis.agents.values()]]
     st.dataframe(pd.DataFrame(statuses), use_container_width=True, hide_index=True)
     st.subheader("Today's intelligence briefing")
-    latest = aegis.pipeline.retrieve_knowledge("daily AI briefing", "ai_industry_intel", top_k=1, security_clearance="admin")
+    latest = safe_call(
+        aegis.pipeline.retrieve_knowledge,
+        "daily AI briefing",
+        "ai_industry_intel",
+        top_k=1,
+        security_clearance="admin",
+    )
     if latest:
         st.json(latest[0]["data"])
     else:

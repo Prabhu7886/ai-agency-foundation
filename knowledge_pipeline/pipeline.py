@@ -76,15 +76,20 @@ class KnowledgePipeline:
         self.logger = get_logger("knowledge_pipeline")
         self.embedding = HashEmbeddingFunction()
         self._chroma_client: Any | None = None
+        self._vector_access_error: str | None = None
 
     def _client(self) -> Any:
+        blocked_reason = getattr(self, "_vector_access_error", None)
+        if blocked_reason:
+            raise RuntimeError(blocked_reason)
         if self._chroma_client is None:
             require_volume = os.getenv("AI_AGENCY_VECTOR_DB_ENCRYPTED_VOLUME_REQUIRED", "true").lower() == "true"
             volume_status = SystemMonitor().volume_encryption_status()
             if require_volume and not volume_status.get("verified"):
-                raise RuntimeError(
+                self._vector_access_error = (
                     "Knowledge access blocked because vector-store volume encryption could not be verified"
                 )
+                raise RuntimeError(self._vector_access_error)
             try:
                 import chromadb
                 from chromadb.config import Settings
