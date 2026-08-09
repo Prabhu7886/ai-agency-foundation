@@ -44,10 +44,15 @@ import {
   changePlugin,
   chat,
   createAgent,
+  createOpportunity,
   createProject,
+  createSolution,
   createSkill,
   decideApproval,
   requestResearch,
+  requestDataJob,
+  speakVoice,
+  transcribeVoice,
 } from "./api";
 import type { Agent, Approval, Bootstrap, Plugin, Project, Skill, Workspace } from "./types";
 
@@ -254,14 +259,14 @@ export default function App() {
           {activeWorkspace === "world-pulse" && (
             <WorldPulse data={data} project={selectedProject} onResearch={(query) => mutate(() => requestResearch(selectedProject?.id ?? null, query), "Research request sent to Approval Center")} />
           )}
-          {activeWorkspace === "opportunity-engine" && <OpportunityEngine data={data} />}
-          {activeWorkspace === "solution-factory" && <SolutionFactory data={data} />}
+          {activeWorkspace === "opportunity-engine" && <><OpportunityCreateForm onCreate={(payload) => mutate(() => createOpportunity(payload), "Opportunity scored from explicit evidence")} /><OpportunityEngine data={data} onCreate={async () => undefined} /></>}
+          {activeWorkspace === "solution-factory" && <><SolutionCreateForm onCreate={(payload) => mutate(() => createSolution(payload), "Solution program created at discovery stage")} /><SolutionFactory data={data} onCreate={async () => undefined} /></>}
           {activeWorkspace === "approval-center" && (
             <ApprovalCenter approvals={data.approvals} onDecision={(item, decision) => mutate(() => decideApproval(item.id, decision), `Approval ${decision}`)} />
           )}
           {activeWorkspace === "security-sentinel" && <SecuritySentinel data={data} />}
           {activeWorkspace === "voice-lounge" && <VoiceLounge />}
-          {activeWorkspace === "data-lab" && <DataLab />}
+          {activeWorkspace === "data-lab" && <DataLab project={selectedProject} onRequest={(payload) => mutate(() => requestDataJob(payload), "Data cleaning plan sent to Approval Center")} />}
         </section>
       </main>
 
@@ -323,6 +328,21 @@ function ExecutiveHome({ data, project, onChat }: { data: Bootstrap; project: Pr
                   <div className="task-copy">
                     <strong>{task.title}</strong>
                     <small>{task.assigned_agent ?? "Aegis"} · {timeAgo(task.updated_at)}</small>
+                    {task.prompt_compilation && (
+                      <details className="prompt-contract">
+                        <summary><Sparkles size={11} /> Prompt compiled · {task.prompt_compilation.risk_level} risk</summary>
+                        <div>
+                          <label>Original request</label>
+                          <p>{task.prompt_compilation.original_prompt}</p>
+                          <label>Execution contract</label>
+                          <pre>{task.prompt_compilation.compiled_prompt}</pre>
+                          <footer>
+                            <span>{task.prompt_compilation.compiler_mode}</span>
+                            <span>{task.prompt_compilation.data_classification}</span>
+                          </footer>
+                        </div>
+                      </details>
+                    )}
                     {task.result_summary && <p className="task-result">{task.result_summary}</p>}
                   </div>
                   <StatusPill tone={task.status === "completed" ? "safe" : task.status === "failed" ? "danger" : "neutral"}>{task.status}</StatusPill>
@@ -396,16 +416,42 @@ function PluginCard({ plugin, onChange }: { plugin: Plugin; onChange: () => void
 function WorldPulse({ data, project, onResearch }: { data: Bootstrap; project: Project | null; onResearch: (query: string) => Promise<void> }) {
   const [query, setQuery] = useState("");
   const submit = async (event: FormEvent) => { event.preventDefault(); if (!query.trim()) return; const value = query; setQuery(""); await onResearch(value); };
-  return <div className="single-workspace"><div className="workspace-intro pulse-intro"><div><div className="eyebrow">GLOBAL IMPACT INTELLIGENCE</div><h2>Signal over noise.<br /><span>Every claim earns its confidence.</span></h2><p>AI, IT, economies, conflicts, trade, gold, silver, politicians, insiders, and institutional holdings.</p></div><Radar className="intro-icon" /></div><form className="research-bar" onSubmit={submit}><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Research a public topic…" /><button disabled={!query.trim()}>Request research</button></form><div className="source-policy"><ShieldCheck size={16} /><span>Public queries only. Web access requires Approval Center authorization and an approved research session.</span></div>{data.world_pulse.length === 0 ? <EmptyState icon={<Globe2 />} title="World Pulse is protected and waiting" body={`No unverified headlines are displayed. Start an approved research task${project ? ` for ${project.name}` : ""}.`} /> : <div className="card-grid">{data.world_pulse.map((item, index) => <article className="entity-card" key={index}><h3>{String(item.headline)}</h3><p>{String(item.summary)}</p></article>)}</div>}</div>;
+  return <div className="single-workspace"><div className="workspace-intro pulse-intro"><div><div className="eyebrow">GLOBAL IMPACT INTELLIGENCE</div><h2>Signal over noise.<br /><span>Every claim earns its confidence.</span></h2><p>AI, IT, economies, conflicts, trade, gold, silver, politicians, insiders, and institutional holdings.</p></div><Radar className="intro-icon" /></div><form className="research-bar" onSubmit={submit}><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Research a public topic…" /><button disabled={!query.trim()}>Request research</button></form><div className="source-policy"><ShieldCheck size={16} /><span>Public queries only. Web access requires Approval Center authorization and an approved research session.</span></div>{data.world_pulse.length === 0 ? <EmptyState icon={<Globe2 />} title="World Pulse is protected and waiting" body={`No unverified headlines are displayed. Start an approved research task${project ? ` for ${project.name}` : ""}.`} /> : <div className="card-grid">{data.world_pulse.map((item, index) => <article className="entity-card pulse-card" key={index}><div className="pulse-card__meta"><StatusPill tone={String(item.verification_state) === "single_source" ? "neutral" : "safe"}>{String(item.verification_state ?? "unverified").replaceAll("_", " ")}</StatusPill><span>{Math.round(Number(item.confidence ?? 0) * 100)}% source confidence</span></div><h3>{String(item.headline)}</h3><p>{String(item.summary)}</p>{item.source_url && <a href={String(item.source_url)} target="_blank" rel="noreferrer">{String(item.domain ?? "Open source")} <ArrowUpRight size={12} /></a>}</article>)}</div>}</div>;
 }
 
-function OpportunityEngine({ data }: { data: Bootstrap }) {
-  return <div className="single-workspace"><div className="workspace-intro"><div><div className="eyebrow">CAPITAL DISCIPLINE</div><h2>Compound first.<br /><span>Explore intelligently.</span></h2><p>Every opportunity is scored by evidence, cost, time to revenue, margin, fit, risk, and operational burden.</p></div><Target className="intro-icon" /></div><div className="allocation-panel"><div className="allocation-ring"><span><strong>80 / 20</strong><small>allocation</small></span></div><div><h3>Existing businesses</h3><div className="allocation-bar"><i style={{ width: "80%" }} /></div><p>80% improves and monetizes what we already own.</p><h3>Exploration</h3><div className="allocation-bar exploration"><i style={{ width: "20%" }} /></div><p>20% tests new AI opportunities with strict stop criteria.</p></div></div>{data.opportunities.length === 0 && <EmptyState icon={<Zap />} title="No unsupported promises" body="Opportunities appear only after evidence is collected and scored." />}</div>;
+function OpportunityCreateForm({ onCreate }: { onCreate: (payload: Record<string, unknown>) => Promise<void> }) {
+  const [title, setTitle] = useState("");
+  const [thesis, setThesis] = useState("");
+  const [evidence, setEvidence] = useState("");
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    await onCreate({ title, thesis, allocation: "existing-80", evidence: [evidence], evidence_strength: 70, revenue_potential: 60, strategic_fit: 75, speed_to_revenue: 60, execution_risk: 40 });
+    setTitle(""); setThesis(""); setEvidence("");
+  };
+  return <form className="research-bar workspace-action-form" onSubmit={submit}><Target size={18} /><input required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Opportunity title" /><input required minLength={20} value={thesis} onChange={(event) => setThesis(event.target.value)} placeholder="Testable thesis" /><input required value={evidence} onChange={(event) => setEvidence(event.target.value)} placeholder="Evidence source or observation" /><button>Score</button></form>;
 }
 
-function SolutionFactory({ data }: { data: Bootstrap }) {
+function SolutionCreateForm({ onCreate }: { onCreate: (payload: Record<string, unknown>) => Promise<void> }) {
+  const [title, setTitle] = useState("");
+  const [problem, setProblem] = useState("");
+  const [audience, setAudience] = useState("");
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    await onCreate({ title, problem, audience });
+    setTitle(""); setProblem(""); setAudience("");
+  };
+  return <form className="research-bar workspace-action-form" onSubmit={submit}><FlaskConical size={18} /><input required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Solution name" /><input required minLength={20} value={problem} onChange={(event) => setProblem(event.target.value)} placeholder="Observed problem" /><input required value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="Who has this problem?" /><button>Discover</button></form>;
+}
+
+function OpportunityEngine({ data, onCreate }: { data: Bootstrap; onCreate: (payload: Record<string, unknown>) => Promise<void> }) {
+  void onCreate;
+  return <div className="single-workspace"><div className="workspace-intro"><div><div className="eyebrow">CAPITAL DISCIPLINE</div><h2>Compound first.<br /><span>Explore intelligently.</span></h2><p>Every opportunity is scored by evidence, revenue potential, fit, speed, and execution risk.</p></div><Target className="intro-icon" /></div><div className="allocation-panel"><div className="allocation-ring"><span><strong>80 / 20</strong><small>allocation</small></span></div><div><h3>Existing businesses</h3><div className="allocation-bar"><i style={{ width: "80%" }} /></div><p>80% improves and monetizes what we already own.</p><h3>Exploration</h3><div className="allocation-bar exploration"><i style={{ width: "20%" }} /></div><p>20% tests new AI opportunities with strict stop criteria.</p></div></div>{data.opportunities.length === 0 ? <EmptyState icon={<Zap />} title="No unsupported promises" body="Opportunities appear only after evidence is collected and scored." /> : <div className="card-grid">{data.opportunities.map((item, index) => <article className="entity-card" key={index}><StatusPill tone="safe">{String(item.score)} / 100</StatusPill><h3>{String(item.title)}</h3><p>{String(item.thesis)}</p><small>{String(item.allocation)}</small></article>)}</div>}</div>;
+}
+
+function SolutionFactory({ data, onCreate }: { data: Bootstrap; onCreate: (payload: Record<string, unknown>) => Promise<void> }) {
+  void onCreate;
   const stages = ["Discover", "Verify", "Design", "Prototype", "Test", "Launch", "Learn"];
-  return <div className="single-workspace"><div className="workspace-intro"><div><div className="eyebrow">PROBLEM → PROOF</div><h2>Create solutions<br /><span>people will actually use.</span></h2><p>Start with a real pain, prove demand, build the smallest useful answer, and measure reality.</p></div><FlaskConical className="intro-icon" /></div><div className="factory-flow">{stages.map((stage, index) => <div key={stage}><span>{index + 1}</span><strong>{stage}</strong>{index < stages.length - 1 && <ChevronRight size={16} />}</div>)}</div>{data.solutions.length === 0 && <EmptyState icon={<BrainCircuit />} title="Factory floor is clear" body="A verified problem will become the first solution program." />}</div>;
+  return <div className="single-workspace"><div className="workspace-intro"><div><div className="eyebrow">PROBLEM → PROOF</div><h2>Create solutions<br /><span>people will actually use.</span></h2><p>Start with a real pain, prove demand, build the smallest useful answer, and measure reality.</p></div><FlaskConical className="intro-icon" /></div><div className="factory-flow">{stages.map((stage, index) => <div key={stage}><span>{index + 1}</span><strong>{stage}</strong>{index < stages.length - 1 && <ChevronRight size={16} />}</div>)}</div>{data.solutions.length === 0 ? <EmptyState icon={<BrainCircuit />} title="Factory floor is clear" body="A verified problem will become the first solution program." /> : <div className="card-grid">{data.solutions.map((item, index) => <article className="entity-card" key={index}><StatusPill>{String(item.stage)}</StatusPill><h3>{String(item.title)}</h3><p>{String(item.problem)}</p><small>{String(item.audience)}</small></article>)}</div>}</div>;
 }
 
 function ApprovalCenter({ approvals, onDecision }: { approvals: Approval[]; onDecision: (item: Approval, decision: "approved" | "declined") => void }) {
@@ -430,22 +476,34 @@ function VoiceLounge() {
   const [message, setMessage] = useState("Push to talk when you're ready.");
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
+  const chunks = useRef<Blob[]>([]);
   const toggle = async () => {
     if (recording) {
-      recorder.current?.stop(); stream.current?.getTracks().forEach((track) => track.stop()); setRecording(false); setMessage("Recording ended locally. Transcription stays disabled until a verified local engine is connected."); return;
+      recorder.current?.stop(); stream.current?.getTracks().forEach((track) => track.stop()); setRecording(false); setMessage("Transcribing with the local speech engine…"); return;
     }
     try {
       stream.current = await navigator.mediaDevices.getUserMedia({ audio: true });
       recorder.current = new MediaRecorder(stream.current);
+      chunks.current = [];
+      recorder.current.ondataavailable = (event) => { if (event.data.size) chunks.current.push(event.data); };
+      recorder.current.onstop = async () => {
+        try {
+          const result = await transcribeVoice(new Blob(chunks.current, { type: recorder.current?.mimeType || "audio/webm" }));
+          setMessage(result.text || "No speech detected.");
+          if (result.text) await speakVoice(`I heard: ${result.text}`);
+        } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Local transcription failed."); }
+      };
       recorder.current.start(); setRecording(true); setMessage("Listening locally… nothing is being uploaded.");
     } catch { setMessage("Microphone permission was not granted."); }
   };
-  return <div className="voice-workspace"><div className={`voice-orb ${recording ? "recording" : ""}`}><button onClick={() => void toggle()}>{recording ? <Square /> : <Mic />}</button><i /><i /><i /></div><div className="eyebrow">PRIVATE PUSH-TO-TALK</div><h2>{message}</h2><p>Aegis records only in browser memory. No browser cloud transcription is used. The verified local speech engine is the next voice integration.</p><StatusPill tone="safe"><LockKeyhole size={12} /> Local audio policy</StatusPill></div>;
+  return <div className="voice-workspace"><div className={`voice-orb ${recording ? "recording" : ""}`}><button onClick={() => void toggle()}>{recording ? <Square /> : <Mic />}</button><i /><i /><i /></div><div className="eyebrow">PRIVATE PUSH-TO-TALK</div><h2>{message}</h2><p>Audio goes only to the loopback Aegis API. Temporary recordings are deleted after local transcription; no cloud speech service is used.</p><StatusPill tone="safe"><LockKeyhole size={12} /> Local audio policy</StatusPill></div>;
 }
 
-function DataLab() {
+function DataLab({ project, onRequest }: { project: Project | null; onRequest: (payload: Record<string, unknown>) => Promise<void> }) {
+  const [path, setPath] = useState("");
   const stages = [["01", "Preserve", "Keep an immutable raw copy"], ["02", "Profile", "Measure shape, types, gaps, and drift"], ["03", "Validate", "Apply explicit quality rules"], ["04", "Standardize", "Normalize formats without hiding changes"], ["05", "Deduplicate", "Propose matches with confidence"], ["06", "Approve", "Review repairs before publishing"], ["07", "Report", "Ship cleaned data with provenance"]];
-  return <div className="single-workspace"><div className="workspace-intro"><div><div className="eyebrow">DATA YOU CAN DEFEND</div><h2>Clean it.<br /><span>Keep the evidence.</span></h2><p>Raw data is never silently overwritten. Every transformation has lineage, confidence, and a QA report.</p></div><Database className="intro-icon" /></div><div className="data-pipeline">{stages.map(([number, title, body]) => <article key={number}><span>{number}</span><div><h3>{title}</h3><p>{body}</p></div></article>)}</div><EmptyState icon={<Database />} title="No dataset loaded" body="Encrypted local dataset intake will be connected after the core workspace verification." /></div>;
+  const submit = async (event: FormEvent) => { event.preventDefault(); if (!project) return; await onRequest({ project_id: project.id, source_path: path, operations: ["trim_strings", "normalize_nulls", "deduplicate"], required_columns: [] }); setPath(""); };
+  return <div className="single-workspace"><div className="workspace-intro"><div><div className="eyebrow">DATA YOU CAN DEFEND</div><h2>Clean it.<br /><span>Keep the evidence.</span></h2><p>Raw data is never silently overwritten. Every transformation has lineage, confidence, and a QA report.</p></div><Database className="intro-icon" /></div><form className="research-bar" onSubmit={submit}><Database size={18} /><input required value={path} onChange={(event) => setPath(event.target.value)} placeholder="Full CSV path inside this project" /><button disabled={!project}>Plan clean copy</button></form><div className="data-pipeline">{stages.map(([number, title, body]) => <article key={number}><span>{number}</span><div><h3>{title}</h3><p>{body}</p></div></article>)}</div></div>;
 }
 
 function CreatePanel({ mode, busy, onClose, onSubmit }: { mode: "project" | "agent" | "skill"; busy: boolean; onClose: () => void; onSubmit: (payload: Record<string, unknown>) => void }) {

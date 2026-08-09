@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -98,6 +99,23 @@ class AegisStore:
                 [(row[0], row[1], row[2], row[3], row[4], row[5], json.dumps(row[6]), now, now) for row in skills],
             )
             connection.executemany(
+                """INSERT OR IGNORE INTO aegis_skill_versions
+                (id, skill_id, version, instructions, checksum_sha256, status, created_at, promoted_at)
+                VALUES (?, ?, '0.1.0', ?, ?, ?, ?, ?)""",
+                [
+                    (
+                        f"{row[0]}-v0.1.0",
+                        row[0],
+                        row[3],
+                        hashlib.sha256(row[3].encode("utf-8")).hexdigest(),
+                        "active" if row[4] == "active" else "candidate",
+                        now,
+                        now if row[4] == "active" else None,
+                    )
+                    for row in skills
+                ],
+            )
+            connection.executemany(
                 """INSERT OR IGNORE INTO aegis_plugin_registry
                 (id, name, category, description, status, connection_status, requires_approval, data_policy, capabilities_json, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -145,6 +163,7 @@ class AegisStore:
                         (project["id"],),
                     )
                 )
+                self._attach_compilations(connection, project["tasks"])
         return projects
 
     def get_project(self, project_id: str) -> dict[str, Any] | None:
@@ -154,6 +173,7 @@ class AegisStore:
                 project["tasks"] = self._rows(
                     connection.execute("SELECT * FROM aegis_tasks WHERE project_id = ? ORDER BY updated_at DESC", (project_id,))
                 )
+                self._attach_compilations(connection, project["tasks"])
         return project
 
     def create_project(
@@ -197,7 +217,55 @@ class AegisStore:
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         with self.database.connection() as connection:
-            return self._row(connection.execute("SELECT * FROM aegis_tasks WHERE id = ?", (task_id,)))
+            task = self._row(connection.execute("SELECT * FROM aegis_tasks WHERE id = ?", (task_id,)))
+            if task:
+                self._attach_compilations(connection, [task])
+            return task
+
+    def save_prompt_compilation(self, task_id: str, value: dict[str, Any]) -> dict[str, Any]:
+        compilation_id = new_id("prompt")
+        now = utc_now()
+        with self.database.connection() as connection:
+            if not connection.execute("SELECT 1 FROM aegis_tasks WHERE id = ?", (task_id,)).fetchone():
+                raise KeyError("Task not found")
+            connection.execute(
+                """INSERT INTO aegis_prompt_compilations
+                (id, task_id, original_prompt, compiled_prompt, objective, data_classification,
+                 risk_level, approvals_json, success_evidence_json, compiler_mode, model, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(task_id) DO UPDATE SET
+                  original_prompt = excluded.original_prompt,
+                  compiled_prompt = excluded.compiled_prompt,
+                  objective = excluded.objective,
+                  data_classification = excluded.data_classification,
+                  risk_level = excluded.risk_level,
+                  approvals_json = excluded.approvals_json,
+                  success_evidence_json = excluded.success_evidence_json,
+                  compiler_mode = excluded.compiler_mode,
+                  model = excluded.model,
+                  created_at = excluded.created_at""",
+                (
+                    compilation_id,
+                    task_id,
+                    value["original_prompt"],
+                    value["compiled_prompt"],
+                    value["objective"],
+                    value["data_classification"],
+                    value["risk_level"],
+                    json.dumps(value.get("approvals_required", [])),
+                    json.dumps(value.get("success_evidence", [])),
+                    value["compiler_mode"],
+                    value.get("model"),
+                    now,
+                ),
+            )
+            connection.execute(
+                "UPDATE aegis_tasks SET risk_level = ?, updated_at = ? WHERE id = ?",
+                (value["risk_level"], now, task_id),
+            )
+            self._activity(connection, "prompt_compiled", f"Compiled task prompt: {value['objective'][:180]}", "task", task_id)
+        task = self.get_task(task_id)
+        return (task or {}).get("prompt_compilation", {})
 
     def update_task(self, task_id: str, status: str, result_summary: str | None = None) -> dict[str, Any]:
         now = utc_now()
@@ -276,6 +344,107 @@ class AegisStore:
             )
             self._activity(connection, "skill_created", f"Created skill proposal: {values['name']}", "skill", skill_id)
         return next(skill for skill in self.list_skills() if skill["id"] == skill_id)
+
+    def list_skill_versions(self, skill_id: str) -> list[dict[str, Any]]:
+        with self.database.connection() as connection:
+            versions = self._rows(
+                connection.execute(
+                    "SELECT * FROM aegis_skill_versions WHERE skill_id = ? ORDER BY created_at DESC",
+                    (skill_id,),
+                )
+            )
+            for version in versions:
+                version["evaluations"] = self._rows(
+                    connection.execute(
+                        "SELECT * FROM aegis_skill_evaluations WHERE version_id = ? ORDER BY created_at DESC",
+                        (version["id"],),
+                    )
+                )
+                for evaluation in version["evaluations"]:
+                    evaluation["passed"] = bool(evaluation["passed"])
+                    evaluation["evidence"] = self._decode(evaluation.pop("evidence_json"), {})
+        return versions
+
+    def create_skill_version(self, skill_id: str, version: str, instructions: str) -> dict[str, Any]:
+        now = utc_now()
+        version_id = new_id("skill-version")
+        with self.database.connection() as connection:
+            if not connection.execute("SELECT 1 FROM aegis_skill_registry WHERE id = ?", (skill_id,)).fetchone():
+                raise KeyError("Skill not found")
+            connection.execute(
+                """INSERT INTO aegis_skill_versions
+                (id, skill_id, version, instructions, checksum_sha256, status, created_at)
+                VALUES (?, ?, ?, ?, ?, 'candidate', ?)""",
+                (version_id, skill_id, version, instructions, hashlib.sha256(instructions.encode("utf-8")).hexdigest(), now),
+            )
+            self._activity(connection, "skill_version_created", f"Created skill candidate {version}", "skill", skill_id)
+        return next(item for item in self.list_skill_versions(skill_id) if item["id"] == version_id)
+
+    def evaluate_skill_version(
+        self, version_id: str, evaluator: str, score: float, passed: bool, evidence: dict[str, Any]
+    ) -> dict[str, Any]:
+        evaluation_id = new_id("evaluation")
+        now = utc_now()
+        with self.database.connection() as connection:
+            version = self._row(connection.execute("SELECT * FROM aegis_skill_versions WHERE id = ?", (version_id,)))
+            if not version:
+                raise KeyError("Skill version not found")
+            connection.execute(
+                """INSERT INTO aegis_skill_evaluations
+                (id, version_id, evaluator, score, passed, evidence_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (evaluation_id, version_id, evaluator, score, int(passed), json.dumps(evidence), now),
+            )
+            connection.execute("UPDATE aegis_skill_versions SET status = 'testing' WHERE id = ? AND status = 'candidate'", (version_id,))
+            self._activity(connection, "skill_evaluated", f"Skill evaluation score {score:.1f}; passed={passed}", "skill", version["skill_id"])
+        return next(
+            item
+            for item in self.list_skill_versions(version["skill_id"])
+            if item["id"] == version_id
+        )
+
+    def promote_skill_version(self, skill_id: str, version_id: str) -> dict[str, Any]:
+        now = utc_now()
+        with self.database.connection() as connection:
+            candidate = self._row(
+                connection.execute("SELECT * FROM aegis_skill_versions WHERE id = ? AND skill_id = ?", (version_id, skill_id))
+            )
+            if not candidate:
+                raise KeyError("Skill version not found")
+            passed = connection.execute(
+                "SELECT 1 FROM aegis_skill_evaluations WHERE version_id = ? AND passed = 1 AND score >= 70 LIMIT 1",
+                (version_id,),
+            ).fetchone()
+            if not passed:
+                raise ValueError("Skill version needs a passing evaluation score of at least 70")
+            connection.execute("UPDATE aegis_skill_versions SET status = 'retired' WHERE skill_id = ? AND status = 'active'", (skill_id,))
+            connection.execute("UPDATE aegis_skill_versions SET status = 'active', promoted_at = ? WHERE id = ?", (now, version_id))
+            connection.execute(
+                "UPDATE aegis_skill_registry SET version = ?, status = 'active', updated_at = ? WHERE id = ?",
+                (candidate["version"], now, skill_id),
+            )
+            self._activity(connection, "skill_promoted", f"Promoted skill version {candidate['version']}", "skill", skill_id)
+        return next(item for item in self.list_skill_versions(skill_id) if item["id"] == version_id)
+
+    def rollback_skill_version(self, skill_id: str, version_id: str) -> dict[str, Any]:
+        now = utc_now()
+        with self.database.connection() as connection:
+            target = self._row(
+                connection.execute(
+                    "SELECT * FROM aegis_skill_versions WHERE id = ? AND skill_id = ? AND status IN ('retired', 'active')",
+                    (version_id, skill_id),
+                )
+            )
+            if not target:
+                raise ValueError("Rollback target must be a previously active skill version")
+            connection.execute("UPDATE aegis_skill_versions SET status = 'retired' WHERE skill_id = ? AND status = 'active'", (skill_id,))
+            connection.execute("UPDATE aegis_skill_versions SET status = 'active', promoted_at = ? WHERE id = ?", (now, version_id))
+            connection.execute(
+                "UPDATE aegis_skill_registry SET version = ?, status = 'active', updated_at = ? WHERE id = ?",
+                (target["version"], now, skill_id),
+            )
+            self._activity(connection, "skill_rolled_back", f"Rolled back skill to {target['version']}", "skill", skill_id)
+        return next(item for item in self.list_skill_versions(skill_id) if item["id"] == version_id)
 
     def assign_skill(self, agent_id: str, skill_id: str) -> None:
         now = utc_now()
@@ -367,7 +536,54 @@ class AegisStore:
 
     def list_world_pulse(self) -> list[dict[str, Any]]:
         with self.database.connection() as connection:
-            return self._rows(connection.execute("SELECT * FROM aegis_world_pulse ORDER BY collected_at DESC LIMIT 100"))
+            return self._rows(
+                connection.execute(
+                    """SELECT p.*, s.domain, s.publisher, s.source_tier, s.verification_state, s.retrieved_at
+                    FROM aegis_world_pulse p
+                    LEFT JOIN aegis_world_pulse_sources s ON s.pulse_id = p.id
+                    ORDER BY p.collected_at DESC LIMIT 100"""
+                )
+            )
+
+    def add_world_pulse(
+        self,
+        *,
+        region: str,
+        category: str,
+        headline: str,
+        summary: str,
+        confidence: float,
+        published_at: str | None,
+        source: dict[str, Any],
+    ) -> dict[str, Any]:
+        pulse_id = new_id("pulse")
+        source_id = new_id("source")
+        now = utc_now()
+        with self.database.connection() as connection:
+            connection.execute(
+                """INSERT INTO aegis_world_pulse
+                (id, region, category, headline, summary, source_url, confidence, impact_level, published_at, collected_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'monitor', ?, ?)""",
+                (pulse_id, region, category, headline, summary, source["url"], confidence, published_at, now),
+            )
+            connection.execute(
+                """INSERT INTO aegis_world_pulse_sources
+                (id, pulse_id, url, domain, publisher, source_tier, verification_state, published_at, retrieved_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    source_id,
+                    pulse_id,
+                    source["url"],
+                    source["domain"],
+                    source.get("publisher"),
+                    source["source_tier"],
+                    source["verification_state"],
+                    source.get("published_at"),
+                    source["retrieved_at"],
+                ),
+            )
+            self._activity(connection, "world_pulse_ingested", f"World Pulse signal: {headline[:180]}", "pulse", pulse_id)
+        return next(item for item in self.list_world_pulse() if item["id"] == pulse_id)
 
     def list_opportunities(self) -> list[dict[str, Any]]:
         with self.database.connection() as connection:
@@ -376,9 +592,98 @@ class AegisStore:
             row["evidence"] = self._decode(row.pop("evidence_json"), [])
         return rows
 
+    def create_opportunity(self, payload: dict[str, Any]) -> dict[str, Any]:
+        opportunity_id = new_id("opportunity")
+        now = utc_now()
+        score = round(
+            payload["evidence_strength"] * 0.30
+            + payload["revenue_potential"] * 0.25
+            + payload["strategic_fit"] * 0.20
+            + payload["speed_to_revenue"] * 0.15
+            + (100 - payload["execution_risk"]) * 0.10,
+            1,
+        )
+        evidence = {
+            "sources": payload["evidence"],
+            "dimensions": {key: payload[key] for key in ("evidence_strength", "revenue_potential", "strategic_fit", "speed_to_revenue", "execution_risk")},
+            "score_formula": "30% evidence + 25% revenue + 20% fit + 15% speed + 10% inverse risk",
+        }
+        with self.database.connection() as connection:
+            connection.execute(
+                """INSERT INTO aegis_opportunities
+                (id, title, thesis, allocation, score, status, evidence_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'scored', ?, ?, ?)""",
+                (opportunity_id, payload["title"], payload["thesis"], payload["allocation"], score, json.dumps(evidence), now, now),
+            )
+            self._activity(connection, "opportunity_scored", f"Scored opportunity: {payload['title']}", "opportunity", opportunity_id)
+        return next(item for item in self.list_opportunities() if item["id"] == opportunity_id)
+
     def list_solutions(self) -> list[dict[str, Any]]:
         with self.database.connection() as connection:
             return self._rows(connection.execute("SELECT * FROM aegis_solutions ORDER BY updated_at DESC"))
+
+    def create_solution(self, payload: dict[str, Any]) -> dict[str, Any]:
+        solution_id = new_id("solution")
+        now = utc_now()
+        with self.database.connection() as connection:
+            connection.execute(
+                """INSERT INTO aegis_solutions
+                (id, title, problem, audience, stage, proof, owner_agent, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'discover', ?, ?, ?, ?)""",
+                (solution_id, payload["title"], payload["problem"], payload["audience"], payload.get("proof", ""), payload.get("owner_agent"), now, now),
+            )
+            self._activity(connection, "solution_created", f"Created solution program: {payload['title']}", "solution", solution_id)
+        return next(item for item in self.list_solutions() if item["id"] == solution_id)
+
+    def transition_solution(self, solution_id: str, target_stage: str, proof: str) -> dict[str, Any]:
+        stages = ["discover", "validate", "prototype", "pilot", "scale"]
+        now = utc_now()
+        with self.database.connection() as connection:
+            current = self._row(connection.execute("SELECT * FROM aegis_solutions WHERE id = ?", (solution_id,)))
+            if not current:
+                raise KeyError("Solution not found")
+            if stages.index(target_stage) != stages.index(current["stage"]) + 1:
+                raise ValueError("Solutions can advance only one evidence-backed stage at a time")
+            connection.execute(
+                "UPDATE aegis_solutions SET stage = ?, proof = ?, updated_at = ? WHERE id = ?",
+                (target_stage, proof, now, solution_id),
+            )
+            self._activity(connection, "solution_advanced", f"Advanced {current['title']} to {target_stage}", "solution", solution_id)
+        return next(item for item in self.list_solutions() if item["id"] == solution_id)
+
+    def create_data_job(self, project_id: str, plan: dict[str, Any]) -> dict[str, Any]:
+        job_id = new_id("data-job")
+        now = utc_now()
+        with self.database.connection() as connection:
+            connection.execute(
+                """INSERT INTO aegis_data_jobs
+                (id, project_id, source_path, source_sha256, recipe_json, status, created_at)
+                VALUES (?, ?, ?, ?, ?, 'planned', ?)""",
+                (job_id, project_id, plan["source_path"], plan["source_sha256"], json.dumps(plan["recipe"]), now),
+            )
+            self._activity(connection, "data_job_planned", f"Planned reversible cleaning for {Path(plan['source_path']).name}", "data_job", job_id)
+        return self.get_data_job(job_id) or {}
+
+    def get_data_job(self, job_id: str) -> dict[str, Any] | None:
+        with self.database.connection() as connection:
+            job = self._row(connection.execute("SELECT * FROM aegis_data_jobs WHERE id = ?", (job_id,)))
+        if job:
+            job["recipe"] = self._decode(job.pop("recipe_json"), {})
+            job["report"] = self._decode(job.pop("report_json"), {})
+        return job
+
+    def complete_data_job(self, job_id: str, result: dict[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                """UPDATE aegis_data_jobs SET output_path = ?, output_sha256 = ?, report_json = ?,
+                status = 'completed', completed_at = ? WHERE id = ?""",
+                (result["output_path"], result["output_sha256"], json.dumps(result["report"]), now, job_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("Data job not found")
+            self._activity(connection, "data_job_completed", "Completed reversible Data Lab job", "data_job", job_id)
+        return self.get_data_job(job_id) or {}
 
     def list_activity(self, limit: int = 50) -> list[dict[str, Any]]:
         with self.database.connection() as connection:
@@ -413,3 +718,15 @@ class AegisStore:
             VALUES (?, ?, ?, ?, ?, ?)""",
             (event_type, summary[:2000], entity_type, entity_id, security_level, utc_now()),
         )
+
+    def _attach_compilations(self, connection: Any, tasks: list[dict[str, Any]]) -> None:
+        for task in tasks:
+            compilation = self._row(
+                connection.execute("SELECT * FROM aegis_prompt_compilations WHERE task_id = ?", (task["id"],))
+            )
+            if not compilation:
+                task["prompt_compilation"] = None
+                continue
+            compilation["approvals_required"] = self._decode(compilation.pop("approvals_json"), [])
+            compilation["success_evidence"] = self._decode(compilation.pop("success_evidence_json"), [])
+            task["prompt_compilation"] = compilation

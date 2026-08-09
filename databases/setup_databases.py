@@ -150,6 +150,22 @@ CREATE TABLE IF NOT EXISTS aegis_tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_aegis_tasks_project ON aegis_tasks(project_id, updated_at);
 
+CREATE TABLE IF NOT EXISTS aegis_prompt_compilations (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL UNIQUE REFERENCES aegis_tasks(id) ON DELETE CASCADE,
+    original_prompt TEXT NOT NULL,
+    compiled_prompt TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    data_classification TEXT NOT NULL DEFAULT 'internal',
+    risk_level TEXT NOT NULL CHECK(risk_level IN ('low', 'medium', 'high', 'critical')),
+    approvals_json TEXT NOT NULL DEFAULT '[]',
+    success_evidence_json TEXT NOT NULL DEFAULT '[]',
+    compiler_mode TEXT NOT NULL,
+    model TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_prompt_task ON aegis_prompt_compilations(task_id, created_at);
+
 CREATE TABLE IF NOT EXISTS aegis_agent_registry (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -182,6 +198,29 @@ CREATE TABLE IF NOT EXISTS aegis_agent_skills (
     assigned_at TEXT NOT NULL,
     PRIMARY KEY(agent_id, skill_id)
 );
+
+CREATE TABLE IF NOT EXISTS aegis_skill_versions (
+    id TEXT PRIMARY KEY,
+    skill_id TEXT NOT NULL REFERENCES aegis_skill_registry(id) ON DELETE CASCADE,
+    version TEXT NOT NULL,
+    instructions TEXT NOT NULL,
+    checksum_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'candidate' CHECK(status IN ('candidate', 'testing', 'active', 'retired')),
+    created_at TEXT NOT NULL,
+    promoted_at TEXT,
+    UNIQUE(skill_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS aegis_skill_evaluations (
+    id TEXT PRIMARY KEY,
+    version_id TEXT NOT NULL REFERENCES aegis_skill_versions(id) ON DELETE CASCADE,
+    evaluator TEXT NOT NULL,
+    score FLOAT NOT NULL CHECK(score BETWEEN 0 AND 100),
+    passed BOOLEAN NOT NULL,
+    evidence_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_skill_evals ON aegis_skill_evaluations(version_id, created_at);
 
 CREATE TABLE IF NOT EXISTS aegis_plugin_registry (
     id TEXT PRIMARY KEY,
@@ -223,6 +262,20 @@ CREATE TABLE IF NOT EXISTS aegis_world_pulse (
     collected_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS aegis_world_pulse_sources (
+    id TEXT PRIMARY KEY,
+    pulse_id TEXT NOT NULL REFERENCES aegis_world_pulse(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    publisher TEXT,
+    source_tier TEXT NOT NULL CHECK(source_tier IN ('primary', 'established', 'other')),
+    verification_state TEXT NOT NULL CHECK(verification_state IN ('primary_source', 'corroborated', 'single_source')),
+    published_at TEXT,
+    retrieved_at TEXT NOT NULL,
+    UNIQUE(pulse_id, url)
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_pulse_sources ON aegis_world_pulse_sources(pulse_id, domain);
+
 CREATE TABLE IF NOT EXISTS aegis_opportunities (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -255,6 +308,20 @@ CREATE TABLE IF NOT EXISTS aegis_activity (
     entity_id TEXT,
     security_level TEXT NOT NULL DEFAULT 'internal',
     created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aegis_data_jobs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES aegis_projects(id) ON DELETE CASCADE,
+    source_path TEXT NOT NULL,
+    output_path TEXT,
+    source_sha256 TEXT NOT NULL,
+    output_sha256 TEXT,
+    recipe_json TEXT NOT NULL,
+    report_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL CHECK(status IN ('planned', 'running', 'completed', 'failed')),
+    created_at TEXT NOT NULL,
+    completed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_aegis_activity_time ON aegis_activity(created_at);
 """
@@ -325,15 +392,20 @@ class DatabaseSetup:
             "mobile_sessions",
             "aegis_projects",
             "aegis_tasks",
+            "aegis_prompt_compilations",
             "aegis_agent_registry",
             "aegis_skill_registry",
             "aegis_agent_skills",
+            "aegis_skill_versions",
+            "aegis_skill_evaluations",
             "aegis_plugin_registry",
             "aegis_approvals",
             "aegis_world_pulse",
+            "aegis_world_pulse_sources",
             "aegis_opportunities",
             "aegis_solutions",
             "aegis_activity",
+            "aegis_data_jobs",
         }
         missing = required - tables
         if missing:

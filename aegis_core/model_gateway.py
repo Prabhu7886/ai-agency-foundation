@@ -55,13 +55,7 @@ class LocalModelGateway:
     def chat(self, message: str, project_context: dict[str, Any] | None = None) -> dict[str, Any]:
         context = json.dumps(project_context or {}, ensure_ascii=False, default=str)[:8000]
         prompt = f"{AEGIS_EXECUTIVE_PROMPT}\n\nPROJECT CONTEXT:\n{context}\n\nOWNER:\n{message.strip()}"
-        response = requests.post(
-            f"{self.endpoint}/api/generate",
-            json={"model": self.model, "prompt": prompt, "stream": False, "keep_alive": -1},
-            timeout=(3, 180),
-        )
-        response.raise_for_status()
-        payload = response.json()
+        payload = self.generate(prompt)
         answer = str(payload.get("response", "")).strip()
         if not answer:
             raise RuntimeError("Ollama returned an empty response")
@@ -72,3 +66,16 @@ class LocalModelGateway:
             "verified_local": True,
             "tokens": int(payload.get("eval_count", 0)),
         }
+
+    def generate(self, prompt: str, *, json_mode: bool = False, timeout_seconds: int = 180) -> dict[str, Any]:
+        """Generate locally, optionally requiring Ollama's JSON output mode."""
+        body: dict[str, Any] = {"model": self.model, "prompt": prompt, "stream": False, "keep_alive": -1}
+        if json_mode:
+            body["format"] = "json"
+        response = requests.post(
+            f"{self.endpoint}/api/generate",
+            json=body,
+            timeout=(3, timeout_seconds),
+        )
+        response.raise_for_status()
+        return response.json()

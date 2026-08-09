@@ -69,3 +69,23 @@ export function requestResearch(projectId: string | null, query: string): Promis
     body: JSON.stringify({ project_id: projectId, query, depth: "standard" }),
   });
 }
+
+export function createOpportunity(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return request("/api/opportunities", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function createSolution(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return request("/api/solutions", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function requestDataJob(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return request("/api/data-lab/jobs", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function transcribeVoice(blob: Blob): Promise<{ text: string; engine: string }> {
+  return request("/api/voice/transcribe", { method: "POST", headers: { "Content-Type": blob.type || "audio/webm" }, body: blob });
+}
+
+export function speakVoice(text: string): Promise<Record<string, unknown>> {
+  return request("/api/voice/speak", { method: "POST", body: JSON.stringify({ text }) });
+}

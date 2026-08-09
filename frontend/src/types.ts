@@ -19,6 +19,19 @@ export type Task = {
   risk_level: string;
   assigned_agent?: string | null;
   result_summary?: string | null;
+  prompt_compilation?: {
+    id: string;
+    original_prompt: string;
+    compiled_prompt: string;
+    objective: string;
+    data_classification: string;
+    risk_level: string;
+    approvals_required: string[];
+    success_evidence: string[];
+    compiler_mode: string;
+    model?: string | null;
+    created_at: string;
+  } | null;
   updated_at: string;
 };
 export type Agent = {
@@ -69,6 +82,14 @@ export type Activity = {
   security_level: string;
   created_at: string;
 };
+export type WorldPulseItem = {
+  headline: string;
+  summary: string;
+  source_url?: string | null;
+  domain?: string | null;
+  confidence: number;
+  verification_state: string;
+};
 export type Bootstrap = {
   brand: { name: string; descriptor: string; motto: string; creed: string };
   workspaces: Workspace[];
@@ -84,7 +105,7 @@ export type Bootstrap = {
   skills: Skill[];
   plugins: Plugin[];
   approvals: Approval[];
-  world_pulse: Array<Record<string, unknown>>;
+  world_pulse: WorldPulseItem[];
   opportunities: Array<Record<string, unknown>>;
   solutions: Array<Record<string, unknown>>;
   activity: Activity[];

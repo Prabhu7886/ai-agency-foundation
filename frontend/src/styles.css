@@ -135,6 +135,18 @@ body::before {
 .task-thread strong { font-size: 11px; }
 .task-thread small { color: #596679; font-size: 9px; margin-top: 3px; }
 .task-result { margin: 9px 0 0; padding: 9px 11px; border-left: 2px solid rgba(34,211,238,.45); border-radius: 0 7px 7px 0; background: rgba(34,211,238,.045); color: #aeb8c8; font-size: 10px; line-height: 1.55; white-space: pre-wrap; }
+.prompt-contract { margin-top: 8px; border: 1px solid rgba(139,92,246,.16); border-radius: 8px; background: rgba(139,92,246,.035); overflow: hidden; }
+.prompt-contract summary { display: flex; align-items: center; gap: 6px; padding: 7px 9px; color: #a89bcf; font-size: 9px; cursor: pointer; list-style: none; }
+.prompt-contract summary::-webkit-details-marker { display: none; }
+.prompt-contract > div { display: grid; gap: 6px; padding: 9px; border-top: 1px solid rgba(139,92,246,.12); }
+.prompt-contract label { color: #68758a; font-size: 8px; text-transform: uppercase; letter-spacing: .1em; }
+.prompt-contract p, .prompt-contract pre { margin: 0; color: #9aa6b8; font: inherit; font-size: 9px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.prompt-contract pre { max-height: 180px; overflow: auto; padding: 8px; border-radius: 6px; background: rgba(0,0,0,.2); }
+.prompt-contract footer { display: flex; gap: 6px; }
+.prompt-contract footer span { padding: 3px 6px; border-radius: 999px; background: rgba(255,255,255,.04); color: #657287; font-size: 8px; }
+.pulse-card__meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.pulse-card__meta > span { color: #627086; font-size: 8px; }
+.pulse-card > a { display: inline-flex; align-items: center; gap: 4px; margin-top: 10px; color: var(--cyan); font-size: 9px; text-decoration: none; }
 .command-composer { background: rgba(5,9,15,.62); border: 1px solid rgba(34,211,238,.14); border-radius: 14px; padding: 10px 10px 8px; margin-top: 12px; }
 .command-composer:focus-within { border-color: rgba(34,211,238,.45); box-shadow: 0 0 0 3px rgba(34,211,238,.05); }
 .command-composer textarea { display: block; width: 100%; resize: none; color: #edf8ff; background: transparent; border: 0; outline: 0; padding: 5px; font-size: 12px; }
@@ -241,6 +253,8 @@ body::before {
 .voice-orb.recording i { border-color: rgba(251,113,133,.2); animation-duration: 1s; }
 .voice-workspace h2 { font: 600 24px "Bahnschrift", "Segoe UI", sans-serif; }
 .voice-workspace > p { color: var(--muted); max-width: 520px; font-size: 10px; line-height: 1.7; }
+.workspace-action-form { margin: 0 24px 18px; flex-wrap: wrap; }
+.workspace-action-form input { min-width: 180px; }
 @keyframes breathe { 50% { transform: scale(1.05); opacity: .45; } }
 .data-pipeline { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
 .data-pipeline article { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 13px; min-height: 145px; }

@@ -39,6 +39,7 @@ class WebResearchService:
                         "title": str(item.get("title", ""))[:500],
                         "url": str(item.get("href", ""))[:2000],
                         "summary": str(item.get("body", ""))[:4000],
+                        "published_at": str(item.get("date", ""))[:100] or None,
                     }
                 )
         domains = Counter(urlparse(item["url"]).netloc for item in findings if item["url"])
