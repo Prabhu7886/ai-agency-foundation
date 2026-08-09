@@ -249,6 +249,18 @@ CREATE TABLE IF NOT EXISTS aegis_approvals (
 );
 CREATE INDEX IF NOT EXISTS idx_aegis_approvals_status ON aegis_approvals(status, requested_at);
 
+CREATE TABLE IF NOT EXISTS aegis_approval_executions (
+    id TEXT PRIMARY KEY,
+    approval_id TEXT NOT NULL UNIQUE REFERENCES aegis_approvals(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed')),
+    result_summary TEXT NOT NULL DEFAULT '',
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_approval_executions_status
+ON aegis_approval_executions(status, started_at);
+
 CREATE TABLE IF NOT EXISTS aegis_world_pulse (
     id TEXT PRIMARY KEY,
     region TEXT NOT NULL,
@@ -400,6 +412,7 @@ class DatabaseSetup:
             "aegis_skill_evaluations",
             "aegis_plugin_registry",
             "aegis_approvals",
+            "aegis_approval_executions",
             "aegis_world_pulse",
             "aegis_world_pulse_sources",
             "aegis_opportunities",

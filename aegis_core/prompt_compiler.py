@@ -94,6 +94,14 @@ class PromptCompiler:
         compiled_prompt = str(value.get("compiled_prompt") or "").strip()
         if not compiled_prompt:
             compiled_prompt = self._compiled_text(original, objective, deliverable, steps, approvals, evidence)
+        else:
+            # The local rewrite may accidentally omit a number, qualifier, or explicit
+            # prohibition. Keep the rewritten contract useful, but make the owner's
+            # normalized request authoritative and visible to every executor.
+            compiled_prompt = (
+                f"OWNER INTENT (authoritative; preserve every constraint): {original}\n\n"
+                f"REWRITTEN EXECUTION CONTRACT:\n{compiled_prompt}"
+            )
         return {
             "original_prompt": original,
             "objective": objective,

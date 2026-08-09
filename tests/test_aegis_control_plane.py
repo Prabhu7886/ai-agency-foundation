@@ -12,6 +12,7 @@ from aegis_core.data_lab import DataLabService
 from aegis_core.github_adapter import GitHubAdapter
 from aegis_core.model_gateway import LocalModelGateway
 from aegis_core.prompt_compiler import PromptCompiler
+from aegis_core.schemas import ChatRequest
 from aegis_core.store import AegisStore
 from aegis_core.world_pulse import WorldPulseService
 from databases.setup_databases import DatabaseSetup
@@ -69,6 +70,36 @@ def test_project_task_and_approval_lifecycle(store: AegisStore, tmp_path: Path) 
     assert store.overview()["opportunity_allocation"] == {"existing": 80, "exploration": 20}
 
 
+def test_approval_execution_is_single_use(store: AegisStore) -> None:
+    approval = store.create_approval("bounded_action", "Run once", "high", evidence={"scope": "test"})
+    store.decide_approval(approval["id"], "approved")
+    claimed = store.claim_approval_execution(approval["id"], "bounded_action")
+    assert claimed["execution"]["status"] == "running"
+    store.finish_approval_execution(approval["id"], "completed", "done")
+    with pytest.raises(ValueError, match="already consumed"):
+        store.claim_approval_execution(approval["id"], "bounded_action")
+    assert store.get_approval(approval["id"])["execution"]["status"] == "completed"
+
+
+def test_stale_pending_approvals_expire(store: AegisStore) -> None:
+    approval = store.create_approval("stale_action", "Do not keep forever", "medium")
+    with store.database.connection() as connection:
+        connection.execute(
+            "UPDATE aegis_approvals SET requested_at = ? WHERE id = ?",
+            ("2000-01-01T00:00:00+00:00", approval["id"]),
+        )
+    assert store.expire_stale_approvals() == 1
+    assert store.get_approval(approval["id"])["status"] == "expired"
+
+
+def test_task_state_machine_blocks_terminal_replay(store: AegisStore, tmp_path: Path) -> None:
+    project = store.create_project("State Machine", "Test", tmp_path / "projects" / "states", None)
+    task = store.create_task(project["id"], "One way", "Run safely", "low", status="running")
+    store.update_task(task["id"], "completed", "finished")
+    with pytest.raises(ValueError, match="Invalid task transition"):
+        store.update_task(task["id"], "running", "replayed")
+
+
 def test_foundation_guard_blocks_sensitive_research_and_unregistered_roots(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -117,6 +148,52 @@ def test_prompt_compiler_fails_closed_to_bounded_fallback() -> None:
     assert compiled["risk_level"] == "medium"
     assert compiled["original_prompt"] == "Push the reviewed branch to GitHub"
     assert "Do not expand authority" in compiled["constraints"]
+
+
+def test_prompt_compiler_keeps_owner_constraints_authoritative() -> None:
+    class RewritingGateway:
+        model = "test-local"
+
+        def generate(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            return {
+                "response": """{
+                    "objective": "List capabilities",
+                    "deliverable": "A concise list",
+                    "context": [],
+                    "constraints": [],
+                    "execution_steps": ["Read the snapshot"],
+                    "risk_level": "low",
+                    "approvals_required": [],
+                    "success_evidence": ["Capabilities listed"],
+                    "data_classification": "public",
+                    "compiled_prompt": "List the available capabilities."
+                }"""
+            }
+
+    original = "List exactly four capabilities and do not execute anything."
+    compiled = PromptCompiler(RewritingGateway()).compile(original, {"name": "Aegis"})
+
+    assert compiled["compiler_mode"] == "ollama-local"
+    assert f"OWNER INTENT (authoritative; preserve every constraint): {original}" in compiled["compiled_prompt"]
+    assert "REWRITTEN EXECUTION CONTRACT" in compiled["compiled_prompt"]
+
+
+def test_chat_history_is_bounded_for_local_conversation_context() -> None:
+    payload = ChatRequest(
+        project_id="project-1",
+        message="Continue the plan",
+        history=[
+            {"role": "user", "content": "Create a plan"},
+            {"role": "assistant", "content": "Here is the plan"},
+        ],
+    )
+    assert [item.role for item in payload.history] == ["user", "assistant"]
+    with pytest.raises(ValueError):
+        ChatRequest(
+            project_id="project-1",
+            message="Too much history",
+            history=[{"role": "user", "content": str(index)} for index in range(13)],
+        )
 
 
 def test_engineering_adapters_enforce_bounded_identifiers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

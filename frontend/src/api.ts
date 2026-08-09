@@ -55,12 +55,25 @@ export function decideApproval(approvalId: string, decision: "approved" | "decli
   return request(`/api/approvals/${approvalId}/decision`, { method: "POST", body: JSON.stringify({ decision }) });
 }
 
-export function chat(projectId: string, message: string): Promise<{
+export function chat(
+  projectId: string,
+  message: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = [],
+): Promise<{
   answer: string;
   provider: string;
   error?: string;
+  task: { id: string; status: string };
+  compilation?: {
+    original_prompt: string;
+    compiled_prompt: string;
+    objective: string;
+    risk_level: string;
+    data_classification: string;
+    compiler_mode: string;
+  };
 }> {
-  return request("/api/chat", { method: "POST", body: JSON.stringify({ project_id: projectId, message }) });
+  return request("/api/chat", { method: "POST", body: JSON.stringify({ project_id: projectId, message, history }) });
 }
 
 export function requestResearch(projectId: string | null, query: string): Promise<Record<string, unknown>> {

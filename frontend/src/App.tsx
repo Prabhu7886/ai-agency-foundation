@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AppWindow,
@@ -10,6 +10,7 @@ import {
   ChevronRight,
   CircleGauge,
   Code2,
+  Copy,
   Database,
   FileCode2,
   FlaskConical,
@@ -25,6 +26,7 @@ import {
   PanelLeftClose,
   Plus,
   Radar,
+  RotateCcw,
   Search,
   Send,
   Settings2,
@@ -58,6 +60,7 @@ import type { Agent, Approval, Bootstrap, Plugin, Project, Skill, Workspace } fr
 
 const workspaceIcons: Record<string, ReactNode> = {
   "executive-home": <CircleGauge size={17} />,
+  "ai-workspace": <BrainCircuit size={17} />,
   "agent-fleet": <Network size={17} />,
   "world-pulse": <Globe2 size={17} />,
   "opportunity-engine": <Target size={17} />,
@@ -81,6 +84,16 @@ function timeAgo(value: string) {
 function StatusPill({ children, tone = "neutral" }: { children: ReactNode; tone?: string }) {
   return <span className={`status-pill status-pill--${tone}`}>{children}</span>;
 }
+
+type AIChatTurn = {
+  id: string;
+  request: string;
+  answer: string;
+  provider: string;
+  createdAt: string;
+  error?: string;
+  compilation?: Awaited<ReturnType<typeof chat>>["compilation"];
+};
 
 function EmptyState({ icon, title, body, action }: { icon: ReactNode; title: string; body: string; action?: ReactNode }) {
   return (
@@ -245,6 +258,7 @@ export default function App() {
           {activeWorkspace === "executive-home" && (
             <ExecutiveHome data={data} project={selectedProject} onChat={(message) => mutate(() => chat(selectedProject!.id, message), "Aegis completed the local turn")} />
           )}
+          {activeWorkspace === "ai-workspace" && <AIWorkspace project={selectedProject} onRefresh={() => refresh(true)} />}
           {activeWorkspace === "agent-fleet" && (
             <AgentFleet
               agents={data.agents}
@@ -285,6 +299,99 @@ export default function App() {
       {toast && <div className="toast"><Check size={16} />{toast}</div>}
     </div>
   );
+}
+
+function AIWorkspace({ project, onRefresh }: { project: Project | null; onRefresh: () => Promise<void> }) {
+  const [message, setMessage] = useState("");
+  const [turns, setTurns] = useState<AIChatTurn[]>([]);
+  const [sending, setSending] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const conversationEnd = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    conversationEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [turns, sending]);
+
+  useEffect(() => {
+    setTurns([]);
+    setMessage("");
+  }, [project?.id]);
+
+  const sendMessage = async (request: string, priorTurns: AIChatTurn[]) => {
+    if (!project || sending) return;
+    setSending(true);
+    const history = priorTurns.flatMap((turn) => [
+      { role: "user" as const, content: turn.request },
+      { role: "assistant" as const, content: turn.answer },
+    ]).slice(-12);
+    try {
+      const result = await chat(project.id, request, history);
+      setTurns((current) => [...current, {
+        id: crypto.randomUUID(),
+        request,
+        answer: result.answer,
+        provider: result.provider,
+        error: result.error,
+        compilation: result.compilation,
+        createdAt: new Date().toISOString(),
+      }]);
+      await onRefresh();
+    } catch (reason) {
+      setTurns((current) => [...current, {
+        id: crypto.randomUUID(),
+        request,
+        answer: "Aegis stopped safely before execution.",
+        provider: "none",
+        error: reason instanceof Error ? reason.message : "Unknown local error",
+        createdAt: new Date().toISOString(),
+      }]);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const request = message.trim();
+    if (!request || !project || sending) return;
+    setMessage("");
+    await sendMessage(request, turns);
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      event.currentTarget.form?.requestSubmit();
+    }
+  };
+
+  const copyAnswer = async (turn: AIChatTurn) => {
+    await navigator.clipboard.writeText(turn.answer);
+    setCopiedId(turn.id);
+    window.setTimeout(() => setCopiedId(null), 1500);
+  };
+
+  const regenerate = async () => {
+    const last = turns.at(-1);
+    if (!last || sending) return;
+    const prior = turns.slice(0, -1);
+    setTurns(prior);
+    await sendMessage(last.request, prior);
+  };
+
+  return <div className="ai-workspace">
+    <header className="ai-workspace__header"><div><div className="eyebrow"><BrainCircuit size={13} /> AEGIS CONVERSATION</div><h2>{project?.name ?? "AI Workspace"}</h2><p>Private local reasoning with your original intent preserved.</p></div><div className="ai-chat-controls"><StatusPill tone="safe">Ollama local</StatusPill><button className="chat-utility" disabled={sending || turns.length === 0} onClick={() => setTurns([])}><Plus size={14} /> New chat</button></div></header>
+    <section className="ai-conversation">
+      {turns.length === 0 ? <div className="ai-welcome"><div className="ai-welcome__mark"><BrainCircuit size={30} /></div><h3>What are we building?</h3><p>Discuss an idea, analyze a market, make a plan, or prepare a coding task. Aegis keeps the conversation local and shows its execution contract when you need it.</p><div className="ai-starters">{["Turn my idea into a practical plan", "Analyze a business opportunity", "Help me design a secure feature"].map((starter) => <button key={starter} onClick={() => setMessage(starter)}>{starter}<ChevronRight size={13} /></button>)}</div></div> : turns.map((turn) => <article className="ai-turn" key={turn.id}>
+        <div className="ai-message ai-message--owner"><div className="ai-avatar ai-avatar--owner">S</div><div><span>You · {new Date(turn.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span><p>{turn.request}</p></div></div>
+        <div className="ai-message ai-message--aegis"><div className="ai-avatar ai-avatar--aegis"><BrainCircuit size={14} /></div><div className="ai-response"><span>Aegis · {turn.provider}</span><p>{turn.answer}</p>{turn.error && <small>{turn.error}</small>}<div className="ai-message-actions"><button onClick={() => copyAnswer(turn)} title="Copy response">{copiedId === turn.id ? <Check size={13} /> : <Copy size={13} />} {copiedId === turn.id ? "Copied" : "Copy"}</button></div></div></div>
+        {turn.compilation && <details className="prompt-contract ai-contract"><summary><Sparkles size={11} /> View rewritten execution contract · {turn.compilation.risk_level} risk</summary><div><label>Objective</label><p>{turn.compilation.objective}</p><label>Compiled prompt</label><pre>{turn.compilation.compiled_prompt}</pre><footer><span>{turn.compilation.compiler_mode}</span><span>{turn.compilation.data_classification}</span></footer></div></details>}
+      </article>)}
+      {sending && <div className="ai-message ai-message--aegis ai-message--thinking"><div className="ai-avatar ai-avatar--aegis"><BrainCircuit size={14} /></div><div><span>Aegis</span><div className="ai-thinking"><i /><i /><i /> Rewriting your request and thinking locally…</div></div></div>}
+      <div ref={conversationEnd} />
+    </section>
+    <div className="ai-composer-dock">{turns.length > 0 && <button className="regenerate-button" disabled={sending} onClick={regenerate}><RotateCcw size={13} /> Regenerate last response</button>}<form className="ai-composer" onSubmit={submit}><textarea rows={2} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={handleKeyDown} placeholder="Message Aegis…" /><footer><div><LockKeyhole size={13} /> Local first · Enter to send · Shift+Enter for a new line</div><button aria-label="Send message" disabled={!message.trim() || !project || sending}><Send size={16} /></button></footer></form><small className="ai-disclaimer">Aegis can make mistakes. Verify important business, security, and financial decisions.</small></div>
+  </div>;
 }
 
 function ExecutiveHome({ data, project, onChat }: { data: Bootstrap; project: Project | null; onChat: (message: string) => Promise<void> }) {

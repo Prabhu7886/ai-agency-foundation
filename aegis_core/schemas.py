@@ -59,9 +59,15 @@ class ApprovalDecision(BaseModel):
     decision: Literal["approved", "declined"]
 
 
+class ChatHistoryMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=20_000)
+
+
 class ChatRequest(BaseModel):
     project_id: str = Field(min_length=2, max_length=100)
     message: str = Field(min_length=1, max_length=50_000)
+    history: list[ChatHistoryMessage] = Field(default_factory=list, max_length=12)
 
 
 class PromptCompileRequest(BaseModel):

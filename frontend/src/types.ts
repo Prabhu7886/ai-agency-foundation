@@ -73,6 +73,7 @@ export type Approval = {
   risk_level: string;
   status: string;
   evidence: Record<string, unknown>;
+  execution?: { status: "running" | "completed" | "failed"; result_summary: string; started_at: string; finished_at?: string | null } | null;
   requested_at: string;
 };
 export type Activity = {

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 from uuid import uuid4
@@ -35,6 +35,7 @@ class AegisStore:
     def initialize(self) -> None:
         self.database.setup_sqlcipher()
         self._seed_registry()
+        self.expire_stale_approvals()
 
     @staticmethod
     def _decode(value: Any, default: Any) -> Any:
@@ -269,13 +270,24 @@ class AegisStore:
 
     def update_task(self, task_id: str, status: str, result_summary: str | None = None) -> dict[str, Any]:
         now = utc_now()
+        transitions = {
+            "planned": {"awaiting_approval", "running", "cancelled"},
+            "awaiting_approval": {"running", "failed", "cancelled"},
+            "running": {"completed", "failed", "cancelled"},
+            "completed": set(),
+            "failed": set(),
+            "cancelled": set(),
+        }
         with self.database.connection() as connection:
+            current = self._row(connection.execute("SELECT * FROM aegis_tasks WHERE id = ?", (task_id,)))
+            if not current:
+                raise KeyError("Task not found")
+            if status != current["status"] and status not in transitions.get(current["status"], set()):
+                raise ValueError(f"Invalid task transition from {current['status']} to {status}")
             cursor = connection.execute(
                 "UPDATE aegis_tasks SET status = ?, result_summary = ?, updated_at = ? WHERE id = ?",
                 (status, result_summary, now, task_id),
             )
-            if cursor.rowcount != 1:
-                raise KeyError("Task not found")
             self._activity(connection, "task_updated", f"Task moved to {status}", "task", task_id)
         return self.get_task(task_id) or {}
 
@@ -502,14 +514,18 @@ class AegisStore:
         return self.get_approval(approval_id) or {}
 
     def list_approvals(self) -> list[dict[str, Any]]:
+        self.expire_stale_approvals()
         with self.database.connection() as connection:
             approvals = self._rows(
                 connection.execute(
                     "SELECT * FROM aegis_approvals ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, requested_at DESC"
                 )
             )
-        for approval in approvals:
-            approval["evidence"] = self._decode(approval.pop("evidence_json"), {})
+            for approval in approvals:
+                approval["evidence"] = self._decode(approval.pop("evidence_json"), {})
+                approval["execution"] = self._row(
+                    connection.execute("SELECT * FROM aegis_approval_executions WHERE approval_id = ?", (approval["id"],))
+                )
         return approvals
 
     def get_approval(self, approval_id: str) -> dict[str, Any] | None:
@@ -517,9 +533,66 @@ class AegisStore:
             approval = self._row(connection.execute("SELECT * FROM aegis_approvals WHERE id = ?", (approval_id,)))
         if approval:
             approval["evidence"] = self._decode(approval.pop("evidence_json"), {})
+            with self.database.connection() as connection:
+                approval["execution"] = self._row(
+                    connection.execute("SELECT * FROM aegis_approval_executions WHERE approval_id = ?", (approval_id,))
+                )
         return approval
 
+    def claim_approval_execution(self, approval_id: str, expected_action: str) -> dict[str, Any]:
+        """Atomically consume one approved action so it cannot be replayed."""
+        execution_id = new_id("execution")
+        now = utc_now()
+        with self.database.connection() as connection:
+            approval = self._row(connection.execute("SELECT * FROM aegis_approvals WHERE id = ?", (approval_id,)))
+            if not approval:
+                raise KeyError("Approval not found")
+            if approval["action"] != expected_action:
+                raise ValueError("Approval action does not match this operation")
+            if approval["status"] != "approved":
+                raise ValueError("Action must be approved before execution")
+            existing = self._row(
+                connection.execute("SELECT * FROM aegis_approval_executions WHERE approval_id = ?", (approval_id,))
+            )
+            if existing:
+                raise ValueError(f"Approval was already consumed with status {existing['status']}")
+            connection.execute(
+                """INSERT INTO aegis_approval_executions
+                (id, approval_id, action, status, started_at) VALUES (?, ?, ?, 'running', ?)""",
+                (execution_id, approval_id, expected_action, now),
+            )
+            self._activity(connection, "approval_execution_started", f"Started approved action: {expected_action}", "approval", approval_id)
+        result = self.get_approval(approval_id) or {}
+        result["execution"] = {"id": execution_id, "status": "running", "started_at": now}
+        return result
+
+    def finish_approval_execution(self, approval_id: str, status: str, result_summary: str = "") -> dict[str, Any]:
+        if status not in {"completed", "failed"}:
+            raise ValueError("Execution status must be completed or failed")
+        now = utc_now()
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                """UPDATE aegis_approval_executions
+                SET status = ?, result_summary = ?, finished_at = ?
+                WHERE approval_id = ? AND status = 'running'""",
+                (status, result_summary[:2000], now, approval_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Approval execution is not running")
+            self._activity(connection, "approval_execution_finished", f"Approved action {status}", "approval", approval_id)
+            execution = self._row(
+                connection.execute("SELECT * FROM aegis_approval_executions WHERE approval_id = ?", (approval_id,))
+            )
+        return execution or {}
+
+    def get_approval_execution(self, approval_id: str) -> dict[str, Any] | None:
+        with self.database.connection() as connection:
+            return self._row(
+                connection.execute("SELECT * FROM aegis_approval_executions WHERE approval_id = ?", (approval_id,))
+            )
+
     def decide_approval(self, approval_id: str, decision: str) -> dict[str, Any]:
+        self.expire_stale_approvals()
         now = utc_now()
         with self.database.connection() as connection:
             current = self._row(connection.execute("SELECT * FROM aegis_approvals WHERE id = ?", (approval_id,)))
@@ -533,6 +606,31 @@ class AegisStore:
             )
             self._activity(connection, "approval_decided", f"Approval {decision}: {current['summary']}", "approval", approval_id)
         return self.get_approval(approval_id) or {}
+
+    def expire_stale_approvals(self, hours: int = 8) -> int:
+        threshold = (datetime.now(timezone.utc) - timedelta(hours=max(1, hours))).isoformat()
+        now = utc_now()
+        with self.database.connection() as connection:
+            stale = self._rows(
+                connection.execute(
+                    "SELECT id, summary FROM aegis_approvals WHERE status = 'pending' AND requested_at < ?",
+                    (threshold,),
+                )
+            )
+            if stale:
+                connection.execute(
+                    "UPDATE aegis_approvals SET status = 'expired', decided_at = ? WHERE status = 'pending' AND requested_at < ?",
+                    (now, threshold),
+                )
+                for approval in stale:
+                    self._activity(
+                        connection,
+                        "approval_expired",
+                        f"Approval expired: {approval['summary']}",
+                        "approval",
+                        approval["id"],
+                    )
+        return len(stale)
 
     def list_world_pulse(self) -> list[dict[str, Any]]:
         with self.database.connection() as connection:

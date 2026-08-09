@@ -54,6 +54,7 @@ from utils.paths import agency_root
 
 WORKSPACES = [
     {"id": "executive-home", "label": "Executive Home", "description": "Priorities, projects, agents, and decisions."},
+    {"id": "ai-workspace", "label": "AI Workspace", "description": "Discuss, analyze, plan, and code with automatic prompt compilation."},
     {"id": "agent-fleet", "label": "Agent Fleet", "description": "Agents, reusable skills, and controlled plugins."},
     {"id": "world-pulse", "label": "World Pulse", "description": "Verified global intelligence and material impact."},
     {"id": "opportunity-engine", "label": "Opportunity Engine", "description": "80% compounding, 20% exploration."},
@@ -137,9 +138,30 @@ def create_app(
         if not supplied or not secrets.compare_digest(supplied, session_token):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Local Aegis session required")
 
+    def claim_approved_action(approval_id: str, expected_action: str) -> dict[str, Any]:
+        try:
+            return store.claim_approval_execution(approval_id, expected_action)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    def complete_approved_action(approval_id: str, summary: str = "") -> None:
+        store.finish_approval_execution(approval_id, "completed", summary)
+
+    def fail_approved_action(approval_id: str, exc: Exception) -> None:
+        store.finish_approval_execution(approval_id, "failed", str(exc))
+
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
-        return {"status": "ok", "local_only": True, "service": "aegis", "version": "0.1.0"}
+        return {
+            "status": "ok",
+            "local_only": True,
+            "service": "aegis",
+            "version": "0.2.0",
+            "database": "sqlcipher-required",
+            "prompt_compiler": "required",
+        }
 
     @app.post("/api/session")
     async def create_session(response: Response) -> dict[str, Any]:
@@ -219,6 +241,8 @@ def create_app(
             return store.update_task(task_id, payload.status, payload.result_summary)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/agents", dependencies=[Depends(require_session)])
     async def agents() -> list[dict[str, Any]]:
@@ -292,18 +316,18 @@ def create_app(
 
     @app.post("/api/skills/release-requests/{approval_id}/execute", dependencies=[Depends(require_session)])
     async def execute_skill_release(approval_id: str) -> dict[str, Any]:
-        approval = store.get_approval(approval_id)
-        if not approval or approval["action"] != "skill_release":
-            raise HTTPException(status_code=404, detail="Skill release approval not found")
-        if approval["status"] != "approved":
-            raise HTTPException(status_code=409, detail="Skill release must be approved first")
+        approval = claim_approved_action(approval_id, "skill_release")
         evidence = approval.get("evidence", {})
         try:
             if evidence.get("release_action") == "rollback":
-                return store.rollback_skill_version(evidence["skill_id"], evidence["version_id"])
-            return store.promote_skill_version(evidence["skill_id"], evidence["version_id"])
+                result = store.rollback_skill_version(evidence["skill_id"], evidence["version_id"])
+            else:
+                result = store.promote_skill_version(evidence["skill_id"], evidence["version_id"])
         except (KeyError, ValueError) as exc:
+            fail_approved_action(approval_id, exc)
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        complete_approved_action(approval_id, "Skill release completed")
+        return result
 
     @app.get("/api/plugins", dependencies=[Depends(require_session)])
     async def plugins() -> list[dict[str, Any]]:
@@ -339,7 +363,13 @@ def create_app(
         if payload.decision == "approved" and decided["action"] == "enable_plugin":
             plugin_id = decided.get("evidence", {}).get("plugin_id")
             if plugin_id:
-                store.set_plugin_status(plugin_id, "enabled", "configured_pending_credentials")
+                claim_approved_action(approval_id, "enable_plugin")
+                try:
+                    store.set_plugin_status(plugin_id, "enabled", "configured_pending_credentials")
+                except Exception as exc:
+                    fail_approved_action(approval_id, exc)
+                    raise
+                complete_approved_action(approval_id, "Plugin enabled; credentials remain pending")
         return decided
 
     @app.post("/api/chat", dependencies=[Depends(require_session)])
@@ -359,10 +389,78 @@ def create_app(
             project_context = {key: project.get(key) for key in ("id", "name", "description", "repository_url", "root_path")}
             compilation = await asyncio.to_thread(prompt_compiler.compile, payload.message, project_context)
             store.save_prompt_compilation(task["id"], compilation)
+            ollama_status = await asyncio.to_thread(model_gateway.health)
+            github_status = await asyncio.to_thread(github.status, project)
+            codex_status = await asyncio.to_thread(codex.status, True)
+            runtime_context = {
+                "version": "0.2.0",
+                "workspaces": [item["label"] for item in WORKSPACES],
+                "overview": store.overview(),
+                "agents": [
+                    {"name": item["name"], "role": item["role"], "status": item["status"]}
+                    for item in store.list_agents()
+                ],
+                "skills": [
+                    {"name": item["name"], "version": item["version"], "status": item["status"]}
+                    for item in store.list_skills()
+                ],
+                "controls": {
+                    "prompt_compilation_required": True,
+                    "approval_execution_single_use": True,
+                    "task_state_machine": True,
+                    "sqlcipher_required": True,
+                    "loopback_only": True,
+                    "cloud_private_data": "blocked",
+                },
+                "implemented_capabilities": [
+                    "Local Ollama chat with automatic bounded prompt compilation",
+                    "Single-use approval execution ledger with expiry",
+                    "One-way task lifecycle enforcement",
+                    "Approval-gated Codex and GitHub engineering adapters",
+                    "Encrypted SQLCipher control-plane persistence",
+                    "Audited project, agent, skill, and workspace inventory",
+                ],
+                "integrations": {
+                    "ollama": {
+                        "state": "connected" if ollama_status.get("available") else "unavailable",
+                        "model": ollama_status.get("model"),
+                        "loopback": True,
+                    },
+                    "github": {
+                        "state": (
+                            "connected"
+                            if github_status.get("authenticated") is True
+                            else "not_authenticated"
+                            if github_status.get("authenticated") is False
+                            else "remote_auth_not_verified_offline"
+                        ),
+                        "cli_installed": github_status.get("installed", False),
+                        "repository_registered": bool(project.get("repository_url")),
+                        "remote_verification": github_status.get("remote_verification"),
+                    },
+                    "codex": {
+                        "state": "connected" if codex_status.get("connected") else "not_connected",
+                        "installed": codex_status.get("installed", False),
+                        "chatgpt_account_present": bool(codex_status.get("account")),
+                        "protocol": codex_status.get("protocol"),
+                    },
+                },
+                "answering_rules": [
+                    "Treat only implemented_capabilities as implemented capabilities.",
+                    "Treat skill status proposal or testing as not yet implemented.",
+                    "Report integration states exactly as supplied; do not infer a different state.",
+                    "Never expose account identifiers, executable paths, or secrets.",
+                ],
+            }
             result = await asyncio.to_thread(
                 model_gateway.chat,
                 compilation["compiled_prompt"],
-                {"project": project_context, "prompt_compiler": {"objective": compilation["objective"], "risk_level": compilation["risk_level"]}},
+                {
+                    "project": project_context,
+                    "aegis_runtime": runtime_context,
+                    "conversation_history": [item.model_dump() for item in payload.history],
+                    "prompt_compiler": {"objective": compilation["objective"], "risk_level": compilation["risk_level"]},
+                },
             )
             store.update_task(task["id"], "completed", result["answer"][:10_000])
             return {"task": store.get_task(task["id"]), "compilation": compilation, **result}
@@ -417,29 +515,32 @@ def create_app(
 
     @app.post("/api/research/requests/{approval_id}/execute", dependencies=[Depends(require_session)])
     async def execute_research(approval_id: str) -> dict[str, Any]:
-        approval = store.get_approval(approval_id)
-        if not approval:
-            raise HTTPException(status_code=404, detail="Research approval not found")
-        if approval["action"] != "public_web_research" or approval["status"] != "approved":
-            raise HTTPException(status_code=409, detail="Research request must be approved first")
+        approval = claim_approved_action(approval_id, "public_web_research")
         evidence = approval.get("evidence", {})
         try:
             result = await asyncio.to_thread(research.search, evidence.get("query", ""), evidence.get("depth", "standard"))
-        except FoundationViolation:
+        except FoundationViolation as exc:
+            fail_approved_action(approval_id, exc)
             raise
         except Exception as exc:
+            fail_approved_action(approval_id, exc)
             raise HTTPException(status_code=502, detail=f"Research provider failed: {str(exc)[:500]}") from exc
-        pulse_result = world_pulse.ingest(
-            result,
-            str(evidence.get("category", "general")),
-            [str(item) for item in evidence.get("regions", ["Global"])],
-        )
-        if approval.get("task_id"):
-            store.update_task(
-                approval["task_id"],
-                "completed",
-                f"Collected {result['source_count']} public sources and accepted {pulse_result['accepted']} traceable signals",
+        try:
+            pulse_result = world_pulse.ingest(
+                result,
+                str(evidence.get("category", "general")),
+                [str(item) for item in evidence.get("regions", ["Global"])],
             )
+            if approval.get("task_id"):
+                store.update_task(
+                    approval["task_id"],
+                    "completed",
+                    f"Collected {result['source_count']} public sources and accepted {pulse_result['accepted']} traceable signals",
+                )
+        except Exception as exc:
+            fail_approved_action(approval_id, exc)
+            raise
+        complete_approved_action(approval_id, f"Accepted {pulse_result['accepted']} World Pulse signals")
         return {**result, "world_pulse": pulse_result}
 
     @app.get("/api/security/foundation", dependencies=[Depends(require_session)])
@@ -472,16 +573,19 @@ def create_app(
 
     @app.post("/api/github/requests/{approval_id}/execute", dependencies=[Depends(require_session)])
     async def execute_github_operation(approval_id: str) -> dict[str, Any]:
-        approval = store.get_approval(approval_id)
-        if not approval or approval["action"] != "github_operation":
-            raise HTTPException(status_code=404, detail="GitHub approval not found")
-        if approval["status"] != "approved":
-            raise HTTPException(status_code=409, detail="GitHub operation must be approved first")
+        approval = claim_approved_action(approval_id, "github_operation")
         project = store.get_project(approval.get("project_id"))
         if not project:
+            fail_approved_action(approval_id, KeyError("Project not found"))
             raise HTTPException(status_code=404, detail="Project not found")
         evidence = approval.get("evidence", {})
-        return await asyncio.to_thread(github.execute, project, evidence.get("operation", ""), evidence.get("parameters", {}))
+        try:
+            result = await asyncio.to_thread(github.execute, project, evidence.get("operation", ""), evidence.get("parameters", {}))
+        except Exception as exc:
+            fail_approved_action(approval_id, exc)
+            raise
+        complete_approved_action(approval_id, f"GitHub {evidence.get('operation', 'operation')} completed")
+        return result
 
     @app.get("/api/codex/status", dependencies=[Depends(require_session)])
     async def codex_status() -> dict[str, Any]:
@@ -499,12 +603,14 @@ def create_app(
 
     @app.post("/api/codex/login/device/{approval_id}/execute", dependencies=[Depends(require_session)])
     async def execute_codex_device_login(approval_id: str) -> dict[str, Any]:
-        approval = store.get_approval(approval_id)
-        if not approval or approval["action"] != "codex_device_login":
-            raise HTTPException(status_code=404, detail="Codex login approval not found")
-        if approval["status"] != "approved":
-            raise HTTPException(status_code=409, detail="Codex login must be approved first")
-        return await asyncio.to_thread(codex.start_device_login)
+        claim_approved_action(approval_id, "codex_device_login")
+        try:
+            result = await asyncio.to_thread(codex.start_device_login)
+        except Exception as exc:
+            fail_approved_action(approval_id, exc)
+            raise
+        complete_approved_action(approval_id, "Codex device-login flow started")
+        return result
 
     @app.post("/api/codex/requests", dependencies=[Depends(require_session)])
     async def request_codex_task(payload: CodexTaskRequest) -> dict[str, Any]:
@@ -527,21 +633,20 @@ def create_app(
 
     @app.post("/api/codex/requests/{approval_id}/execute", dependencies=[Depends(require_session)])
     async def execute_codex_task(approval_id: str) -> dict[str, Any]:
-        approval = store.get_approval(approval_id)
-        if not approval or approval["action"] != "codex_task":
-            raise HTTPException(status_code=404, detail="Codex task approval not found")
-        if approval["status"] != "approved":
-            raise HTTPException(status_code=409, detail="Codex task must be approved first")
+        approval = claim_approved_action(approval_id, "codex_task")
         project = store.get_project(approval.get("project_id"))
         if not project:
+            fail_approved_action(approval_id, KeyError("Project not found"))
             raise HTTPException(status_code=404, detail="Project not found")
         store.update_task(approval["task_id"], "running", "Codex app-server turn started")
         try:
             result = await asyncio.to_thread(codex.run_approved_turn, project, approval.get("evidence", {}).get("compiled_prompt", ""))
             store.update_task(approval["task_id"], "completed", result["answer"][:10_000])
+            complete_approved_action(approval_id, f"Codex turn {result.get('status', 'completed')}")
             return {"task": store.get_task(approval["task_id"]), "result": result}
         except Exception as exc:
             store.update_task(approval["task_id"], "failed", str(exc)[:2000])
+            fail_approved_action(approval_id, exc)
             raise
 
     @app.post("/api/data-lab/jobs", dependencies=[Depends(require_session)])
@@ -566,17 +671,20 @@ def create_app(
 
     @app.post("/api/data-lab/jobs/{approval_id}/execute", dependencies=[Depends(require_session)])
     async def execute_data_job(approval_id: str) -> dict[str, Any]:
-        approval = store.get_approval(approval_id)
-        if not approval or approval["action"] != "data_lab_job":
-            raise HTTPException(status_code=404, detail="Data Lab approval not found")
-        if approval["status"] != "approved":
-            raise HTTPException(status_code=409, detail="Data Lab job must be approved first")
+        approval = claim_approved_action(approval_id, "data_lab_job")
         project = store.get_project(approval.get("project_id"))
         job = store.get_data_job(approval.get("evidence", {}).get("job_id", ""))
         if not project or not job:
+            fail_approved_action(approval_id, KeyError("Data Lab job context is missing"))
             raise HTTPException(status_code=404, detail="Data Lab job context is missing")
-        result = await asyncio.to_thread(data_lab.execute, project, job)
-        return store.complete_data_job(job["id"], result)
+        try:
+            result = await asyncio.to_thread(data_lab.execute, project, job)
+            completed = store.complete_data_job(job["id"], result)
+        except Exception as exc:
+            fail_approved_action(approval_id, exc)
+            raise
+        complete_approved_action(approval_id, "Reversible Data Lab job completed")
+        return completed
 
     @app.get("/api/voice/status", dependencies=[Depends(require_session)])
     async def voice_status() -> dict[str, Any]:
@@ -613,16 +721,15 @@ def create_app(
 
     @app.post("/api/solutions/transitions/{approval_id}/execute", dependencies=[Depends(require_session)])
     async def execute_solution_transition(approval_id: str) -> dict[str, Any]:
-        approval = store.get_approval(approval_id)
-        if not approval or approval["action"] != "solution_transition":
-            raise HTTPException(status_code=404, detail="Solution transition approval not found")
-        if approval["status"] != "approved":
-            raise HTTPException(status_code=409, detail="Solution transition must be approved first")
+        approval = claim_approved_action(approval_id, "solution_transition")
         evidence = approval["evidence"]
         try:
-            return store.transition_solution(evidence["solution_id"], evidence["target_stage"], evidence["proof"])
+            result = store.transition_solution(evidence["solution_id"], evidence["target_stage"], evidence["proof"])
         except (KeyError, ValueError) as exc:
+            fail_approved_action(approval_id, exc)
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        complete_approved_action(approval_id, f"Solution advanced to {evidence['target_stage']}")
+        return result
 
     frontend_dist = Path(__file__).resolve().parents[1] / "frontend" / "dist"
     if frontend_dist.exists():
