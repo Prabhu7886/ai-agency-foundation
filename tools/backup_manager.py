@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import re
 import shutil
 import tempfile
 import threading
+import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from databases.setup_databases import DatabaseSetup
@@ -19,6 +22,10 @@ from utils.paths import ensure_runtime_directories
 
 class EncryptedBackupManager:
     """Produces only AES-256-GCM backup artifacts and verifies every write."""
+
+    BACKUP_NAME = re.compile(r"^ai-agency-(\d{8}T\d{6}Z)\.zip\.enc$")
+    MAX_ARCHIVE_MEMBERS = 50_000
+    MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
 
     def __init__(self) -> None:
         self.paths = ensure_runtime_directories()
@@ -53,20 +60,137 @@ class EncryptedBackupManager:
             finally:
                 shutil.rmtree(temporary_root, ignore_errors=True)
 
-    def restore_to(self, backup_path: Path, destination: Path, timestamp: str) -> Path:
+    def restore_to(self, backup_path: Path, destination: Path, timestamp: str | None = None) -> Path:
         source = Path(backup_path).resolve(strict=True)
         target = Path(destination).resolve()
-        if target.exists() and any(target.iterdir()):
-            raise FileExistsError("Restore destination must be empty")
-        target.mkdir(parents=True, exist_ok=True)
-        archive = self.encryption.decrypt_bytes(source.read_bytes(), f"backup:{timestamp}")
-        temporary_zip = self.paths["runtime"] / f"restore-{timestamp}.zip"
+        if target.exists() and (not target.is_dir() or any(target.iterdir())):
+            raise FileExistsError("Restore destination must be an empty directory or not exist")
+
+        backup_timestamp = self._backup_timestamp(source, timestamp)
+        archive = self.encryption.decrypt_bytes(source.read_bytes(), f"backup:{backup_timestamp}")
+        temporary_root = Path(tempfile.mkdtemp(prefix="aegis-restore-", dir=self.paths["runtime"]))
+        staging = temporary_root / "verified"
+        staging.mkdir()
         try:
-            temporary_zip.write_bytes(archive)
-            shutil.unpack_archive(temporary_zip, target, "zip")
+            with zipfile.ZipFile(io.BytesIO(archive), "r") as backup_zip:
+                members = self._validated_members(backup_zip)
+                for member, relative in members:
+                    extracted = staging.joinpath(*relative.parts)
+                    if member.is_dir():
+                        extracted.mkdir(parents=True, exist_ok=True)
+                        continue
+                    extracted.parent.mkdir(parents=True, exist_ok=True)
+                    with backup_zip.open(member, "r") as source_file, extracted.open("wb") as target_file:
+                        shutil.copyfileobj(source_file, target_file)
+
+            self._verify_restored_manifest(staging, backup_timestamp)
+            if target.exists():
+                target.rmdir()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(staging), str(target))
         finally:
-            temporary_zip.unlink(missing_ok=True)
+            shutil.rmtree(temporary_root, ignore_errors=True)
         return target
+
+    @classmethod
+    def _backup_timestamp(cls, source: Path, supplied: str | None) -> str:
+        match = cls.BACKUP_NAME.fullmatch(source.name)
+        if not match:
+            raise ValueError("Backup filename does not contain a valid UTC timestamp")
+        inferred = match.group(1)
+        if supplied is not None and supplied != inferred:
+            raise ValueError("Supplied timestamp does not match the encrypted backup filename")
+        return inferred
+
+    @classmethod
+    def _validated_members(cls, backup_zip: zipfile.ZipFile) -> list[tuple[zipfile.ZipInfo, PurePosixPath]]:
+        members = backup_zip.infolist()
+        if len(members) > cls.MAX_ARCHIVE_MEMBERS:
+            raise RuntimeError("Backup archive contains too many members")
+
+        validated: list[tuple[zipfile.ZipInfo, PurePosixPath]] = []
+        seen: set[str] = set()
+        total_size = 0
+        for member in members:
+            name = member.filename
+            relative = PurePosixPath(name)
+            if (
+                not name
+                or "\\" in name
+                or "\x00" in name
+                or relative.is_absolute()
+                or relative == PurePosixPath(".")
+                or ".." in relative.parts
+            ):
+                raise RuntimeError(f"Backup archive contains an unsafe path: {name!r}")
+            normalized = relative.as_posix().rstrip("/")
+            if normalized in seen:
+                raise RuntimeError(f"Backup archive contains a duplicate path: {normalized}")
+            seen.add(normalized)
+
+            unix_mode = (member.external_attr >> 16) & 0o170000
+            if unix_mode == 0o120000:
+                raise RuntimeError(f"Backup archive contains a symbolic link: {name!r}")
+            if member.flag_bits & 0x1:
+                raise RuntimeError("Nested ZIP encryption is not supported")
+            total_size += member.file_size
+            if total_size > cls.MAX_ARCHIVE_BYTES:
+                raise RuntimeError("Backup archive expands beyond the restore size limit")
+            validated.append((member, relative))
+        return validated
+
+    @classmethod
+    def _verify_restored_manifest(cls, root: Path, timestamp: str) -> None:
+        manifest_path = root / "manifest.json"
+        if not manifest_path.is_file():
+            raise RuntimeError("Backup manifest is missing")
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Backup manifest is invalid") from exc
+        if manifest.get("version") != 1 or manifest.get("created_at") != timestamp:
+            raise RuntimeError("Backup manifest version or timestamp is invalid")
+        entries = manifest.get("files")
+        if not isinstance(entries, list):
+            raise RuntimeError("Backup manifest file list is invalid")
+
+        expected: set[str] = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise RuntimeError("Backup manifest contains an invalid file entry")
+            name = entry.get("path")
+            if not isinstance(name, str):
+                raise RuntimeError("Backup manifest contains an invalid path")
+            relative = PurePosixPath(name)
+            if (
+                not name
+                or "\\" in name
+                or relative.is_absolute()
+                or ".." in relative.parts
+                or relative.as_posix() == "manifest.json"
+            ):
+                raise RuntimeError(f"Backup manifest contains an unsafe path: {name!r}")
+            normalized = relative.as_posix()
+            if normalized in expected:
+                raise RuntimeError(f"Backup manifest contains a duplicate path: {normalized}")
+            expected.add(normalized)
+            restored = root.joinpath(*relative.parts)
+            if not restored.is_file():
+                raise RuntimeError(f"Backup file is missing after restore: {normalized}")
+            if restored.stat().st_size != entry.get("size"):
+                raise RuntimeError(f"Backup file size does not match its manifest: {normalized}")
+            digest = hashlib.sha256(restored.read_bytes()).hexdigest()
+            if digest != entry.get("sha256"):
+                raise RuntimeError(f"Backup file hash does not match its manifest: {normalized}")
+
+        actual = {
+            path.relative_to(root).as_posix()
+            for path in root.rglob("*")
+            if path.is_file() and path != manifest_path
+        }
+        if actual != expected:
+            unexpected = sorted(actual - expected)
+            raise RuntimeError(f"Backup contains files not declared in its manifest: {unexpected[:10]}")
 
     def prune(self, retain: int = 14) -> list[str]:
         if retain < 1:

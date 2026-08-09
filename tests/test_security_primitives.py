@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import io
 import json
 import os
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from knowledge_pipeline.pipeline import HashEmbeddingFunction, KnowledgePipeline
+from tools.backup_manager import EncryptedBackupManager
 from utils.encryption import EncryptionManager, KeyManager, safe_identifier
 from utils.monitor import SystemMonitor
 from utils.scheduler import SecureTaskScheduler
@@ -102,16 +106,102 @@ def test_ollama_firewall_requires_fresh_protected_attestation(
         encoding="utf-8",
     )
     monkeypatch.setenv("AI_AGENCY_BITLOCKER_ATTESTATION", str(attestation))
-    assert SystemMonitor.ollama_firewall_status()["verified"] is True
+    assert SystemMonitor._read_ollama_firewall_attestation(attestation)["verified"] is True
 
     payload = json.loads(attestation.read_text(encoding="utf-8"))
     payload["ollama_firewall"]["mode"] = "maintenance-or-unconfigured"
     payload["ollama_firewall"]["verified"] = False
     attestation.write_text(json.dumps(payload), encoding="utf-8")
-    assert SystemMonitor.ollama_firewall_status()["verified"] is False
+    assert SystemMonitor._read_ollama_firewall_attestation(attestation)["verified"] is False
 
 
 def test_scheduler_requires_security_validation() -> None:
     scheduler = SecureTaskScheduler()
     with pytest.raises(PermissionError):
         scheduler.submit("unsafe", lambda: None)
+
+
+def _synthetic_backup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    files: dict[str, bytes],
+    manifest_files: dict[str, bytes] | None = None,
+) -> tuple[EncryptedBackupManager, Path, str]:
+    timestamp = "20260809T120000Z"
+    monkeypatch.setenv("AI_AGENCY_MASTER_KEY", base64.urlsafe_b64encode(b"r" * 32).decode("ascii"))
+    encryption = EncryptionManager(KeyManager(tmp_path / "missing.env"))
+    declared = manifest_files if manifest_files is not None else files
+    manifest = {
+        "version": 1,
+        "created_at": timestamp,
+        "files": [
+            {
+                "path": name,
+                "size": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+            for name, content in sorted(declared.items())
+        ],
+    }
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as backup_zip:
+        for name, content in files.items():
+            backup_zip.writestr(name, content)
+        backup_zip.writestr("manifest.json", json.dumps(manifest))
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    backup_path = tmp_path / f"ai-agency-{timestamp}.zip.enc"
+    backup_path.write_bytes(encryption.encrypt_bytes(archive.getvalue(), f"backup:{timestamp}"))
+    manager = EncryptedBackupManager.__new__(EncryptedBackupManager)
+    manager.paths = {"runtime": runtime}
+    manager.encryption = encryption
+    return manager, backup_path, timestamp
+
+
+def test_synthetic_backup_restore_verifies_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    files = {"metrics.db": b"synthetic encrypted database", "config/security.yaml": b"offline: true\n"}
+    manager, backup_path, _ = _synthetic_backup(monkeypatch, tmp_path, files)
+    restored = manager.restore_to(backup_path, tmp_path / "restored")
+    assert (restored / "metrics.db").read_bytes() == files["metrics.db"]
+    assert (restored / "config" / "security.yaml").read_bytes() == files["config/security.yaml"]
+
+
+def test_restore_rejects_manifest_tampering(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manager, backup_path, _ = _synthetic_backup(
+        monkeypatch,
+        tmp_path,
+        {"metrics.db": b"tampered"},
+        manifest_files={"metrics.db": b"expected"},
+    )
+    destination = tmp_path / "restored"
+    with pytest.raises(RuntimeError, match="size does not match|hash does not match"):
+        manager.restore_to(backup_path, destination)
+    assert not destination.exists()
+
+
+def test_restore_rejects_zip_path_traversal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manager, backup_path, _ = _synthetic_backup(
+        monkeypatch,
+        tmp_path,
+        {"../outside.txt": b"escape"},
+    )
+    destination = tmp_path / "restored"
+    with pytest.raises(RuntimeError, match="unsafe path"):
+        manager.restore_to(backup_path, destination)
+    assert not destination.exists()
+    assert not (tmp_path / "outside.txt").exists()
+
+
+def test_restore_rejects_mismatched_timestamp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manager, backup_path, _ = _synthetic_backup(monkeypatch, tmp_path, {"metrics.db": b"data"})
+    with pytest.raises(ValueError, match="does not match"):
+        manager.restore_to(backup_path, tmp_path / "restored", "20260809T120001Z")
