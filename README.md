@@ -19,16 +19,24 @@ Do not paste sensitive client data into ChatGPT, Codex, Telegram, or research qu
 
 ## Prerequisites
 
-Use 64-bit Python 3.11. The pinned dependency set targets Python 3.11 and includes native SQLCipher support. Install Ollama locally and download `llama3.1:8b` before enabling offline mode.
+Use 64-bit Python 3.12. The dependency set is tested on Python 3.12 and includes native SQLCipher support. Install Ollama locally and download `llama3.1:8b` before enabling offline mode.
 
 Enable BitLocker on the drive containing `C:\AI_AGENCY` before initializing ChromaDB. If the machine lacks supported volume encryption, do not use the vector store for private data.
+
+On Windows, install the least-privilege BitLocker attestation helper once from an administrator PowerShell window:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\windows\install_bitlocker_attestation.ps1
+```
+
+The helper runs as `SYSTEM` at startup and daily, writes no recovery password, and stores only encryption status in an administrator-protected directory under `C:\ProgramData\AI_Agency\Security`. Aegis reads this short-lived attestation so the AI runtime never needs administrator privileges. If the attestation is missing, invalid, older than 30 hours, or reports less than 100% encryption with protection on, vector access fails closed.
 
 ## Installation
 
 Run these commands in PowerShell from `C:\AI_AGENCY`:
 
 ```powershell
-py -3.11 -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements-dev.txt

@@ -17,6 +17,16 @@ The advisory waiver is limited to `PYSEC-2026-311`. No future or unrelated findi
 
 If Chroma publishes a fixed Windows-compatible release, remove this waiver and upgrade immediately.
 
+## Windows volume-encryption attestation
+
+The Aegis process must not run as administrator. Windows restricts live BitLocker inspection to elevated callers, so a narrow scheduled task performs that single check as `SYSTEM` and writes a non-secret status document under `C:\ProgramData\AI_Agency\Security`.
+
+- The directory grants full control only to `SYSTEM` and local administrators; standard users receive read/execute access.
+- The attestation contains status, percentage, method, timestamp, and protector-presence booleans. It never contains the recovery password.
+- Aegis accepts the attestation only for its own drive and only for 30 hours.
+- The verifier accepts Windows Device Encryption's `Used Space Only Encrypted` wording only when encryption is 100% and protection is on.
+- Missing, stale, partial, or unprotected status blocks ChromaDB and runtime startup.
+
 ## Reporting and operating boundaries
 
 Do not open a network listener for ChromaDB, Ollama, Streamlit, or internal services. Streamlit and Ollama must bind to `127.0.0.1`. Do not paste client data, credentials, or private business records into an issue or public GitHub discussion. Rotate any credential that is accidentally exposed.

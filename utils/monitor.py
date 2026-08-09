@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import socket
 import subprocess
 from dataclasses import asdict, dataclass
@@ -113,10 +115,58 @@ class SystemMonitor:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             output = f"{completed.stdout}\n{completed.stderr}"
-            protected = "Protection On" in output and "Fully Encrypted" in output
-            return {"verified": protected, "status": "protected" if protected else "not verified", "drive": drive}
+            direct = self._parse_bitlocker_output(output, drive)
+            if completed.returncode == 0 or direct["verified"]:
+                return direct
+            return self._read_bitlocker_attestation(drive, direct["status"])
         except (FileNotFoundError, subprocess.SubprocessError) as exc:
-            return {"verified": False, "status": str(exc), "drive": drive}
+            return self._read_bitlocker_attestation(drive, str(exc))
+
+    @staticmethod
+    def _parse_bitlocker_output(output: str, drive: str) -> dict[str, Any]:
+        protection_on = bool(re.search(r"Protection Status:\s*Protection On", output, re.IGNORECASE))
+        conversion_ok = bool(
+            re.search(r"Conversion Status:\s*(?:Fully Encrypted|Used Space Only Encrypted)", output, re.IGNORECASE)
+        )
+        percentage_match = re.search(r"Percentage Encrypted:\s*([0-9]+(?:\.[0-9]+)?)%", output, re.IGNORECASE)
+        percentage = float(percentage_match.group(1)) if percentage_match else None
+        verified = protection_on and conversion_ok and percentage is not None and percentage >= 100.0
+        return {
+            "verified": verified,
+            "status": "protected" if verified else "not verified",
+            "drive": drive,
+            "percentage": percentage,
+            "source": "manage-bde",
+        }
+
+    @staticmethod
+    def _read_bitlocker_attestation(drive: str, direct_error: str) -> dict[str, Any]:
+        program_data = Path(os.getenv("PROGRAMDATA", r"C:\ProgramData"))
+        attestation_path = Path(
+            os.getenv(
+                "AI_AGENCY_BITLOCKER_ATTESTATION",
+                str(program_data / "AI_Agency" / "Security" / "bitlocker_attestation.json"),
+            )
+        )
+        try:
+            attestation = json.loads(attestation_path.read_text(encoding="utf-8-sig"))
+            checked_at = datetime.fromisoformat(str(attestation["checked_at"]).replace("Z", "+00:00"))
+            age_seconds = (datetime.now(timezone.utc) - checked_at.astimezone(timezone.utc)).total_seconds()
+            verified = (
+                bool(attestation.get("verified"))
+                and str(attestation.get("drive", "")).upper() == drive.upper()
+                and 0 <= age_seconds <= 108_000
+            )
+            return {
+                "verified": verified,
+                "status": "protected (administrator attestation)" if verified else "attestation invalid or stale",
+                "drive": drive,
+                "percentage": attestation.get("percentage"),
+                "source": "administrator-attestation",
+                "checked_at": attestation.get("checked_at"),
+            }
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            return {"verified": False, "status": direct_error, "drive": drive, "source": "unverified"}
 
     @staticmethod
     def _process_name(pid: int | None) -> str:

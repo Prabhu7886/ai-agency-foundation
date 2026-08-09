@@ -61,6 +61,26 @@ def test_vector_store_fails_closed_without_verified_volume_encryption(
         pipeline._client()
 
 
+def test_bitlocker_parser_accepts_windows_device_encryption_at_100_percent() -> None:
+    output = """
+    Conversion Status:    Used Space Only Encrypted
+    Percentage Encrypted: 100.0%
+    Protection Status:    Protection On
+    """
+    result = SystemMonitor._parse_bitlocker_output(output, "C:")
+    assert result["verified"] is True
+    assert result["percentage"] == 100.0
+
+
+def test_bitlocker_parser_rejects_partial_encryption() -> None:
+    output = """
+    Conversion Status:    Used Space Only Encrypted
+    Percentage Encrypted: 99.9%
+    Protection Status:    Protection On
+    """
+    assert SystemMonitor._parse_bitlocker_output(output, "C:")["verified"] is False
+
+
 def test_scheduler_requires_security_validation() -> None:
     scheduler = SecureTaskScheduler()
     with pytest.raises(PermissionError):
