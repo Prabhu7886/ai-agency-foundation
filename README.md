@@ -31,6 +31,27 @@ powershell -ExecutionPolicy Bypass -File tools\windows\install_bitlocker_attesta
 
 The helper runs as `SYSTEM` at startup and daily, writes no recovery password, and stores only encryption status in an administrator-protected directory under `C:\ProgramData\AI_Agency\Security`. Aegis reads this short-lived attestation so the AI runtime never needs administrator privileges. If the attestation is missing, invalid, older than 30 hours, or reports less than 100% encryption with protection on, vector access fails closed.
 
+Install the controlled-maintenance Ollama firewall policy once from an administrator PowerShell window:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\windows\install_ollama_firewall.ps1
+```
+
+During normal operation, both Ollama executables are blocked from outbound internet access while the localhost API remains available. For an approved model or application update, stop Aegis and the dashboard, then use:
+
+```powershell
+# Temporarily allow Ollama internet access; refuses while protected agency processes run.
+powershell -ExecutionPolicy Bypass -File tools\windows\ollama_maintenance.ps1 -Mode Enter
+
+# Perform only the approved update or model pull, then restore protection.
+powershell -ExecutionPolicy Bypass -File tools\windows\ollama_maintenance.ps1 -Mode Exit
+
+# Inspect rules and any active external Ollama connections.
+powershell -ExecutionPolicy Bypass -File tools\windows\ollama_maintenance.ps1 -Mode Status
+```
+
+Never process client or sensitive personal data in maintenance mode. After exiting, rerun `python -m agents.security.auditor` before restarting Aegis.
+
 ## Installation
 
 Run these commands in PowerShell from `C:\AI_AGENCY`:

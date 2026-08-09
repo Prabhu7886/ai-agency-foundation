@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -79,6 +81,34 @@ def test_bitlocker_parser_rejects_partial_encryption() -> None:
     Protection Status:    Protection On
     """
     assert SystemMonitor._parse_bitlocker_output(output, "C:")["verified"] is False
+
+
+def test_ollama_firewall_requires_fresh_protected_attestation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    attestation = tmp_path / "security_attestation.json"
+    attestation.write_text(
+        json.dumps(
+            {
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+                "ollama_firewall": {
+                    "verified": True,
+                    "mode": "protected",
+                    "rules": [{"name": "server", "verified": True}, {"name": "desktop", "verified": True}],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AI_AGENCY_BITLOCKER_ATTESTATION", str(attestation))
+    assert SystemMonitor.ollama_firewall_status()["verified"] is True
+
+    payload = json.loads(attestation.read_text(encoding="utf-8"))
+    payload["ollama_firewall"]["mode"] = "maintenance-or-unconfigured"
+    payload["ollama_firewall"]["verified"] = False
+    attestation.write_text(json.dumps(payload), encoding="utf-8")
+    assert SystemMonitor.ollama_firewall_status()["verified"] is False
 
 
 def test_scheduler_requires_security_validation() -> None:

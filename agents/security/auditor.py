@@ -53,6 +53,7 @@ class SecurityAuditor:
             ("secrets_protected", self.check_secret_storage),
             ("client_data_isolated", self.check_client_isolation),
             ("ollama_localhost_only", self.check_ollama_binding),
+            ("ollama_outbound_firewall", self.check_ollama_firewall),
             ("outbound_connections", self.check_outbound_connections),
             ("telegram_whitelist", self.check_telegram_authentication),
             ("backup_encryption", self.check_backup_encryption),
@@ -159,6 +160,17 @@ class SecurityAuditor:
             "outbound_connections", not suspicious, "high",
             f"{len(connections)} total external connections; {len(suspicious)} from protected processes",
             "Investigate and stop protected processes with external connections" if suspicious else "Review connection ledger regularly",
+        )
+
+    def check_ollama_firewall(self) -> AuditCheck:
+        status = self.monitor.ollama_firewall_status()
+        passed = bool(status.get("verified")) and status.get("mode") == "protected"
+        return AuditCheck(
+            "ollama_outbound_firewall",
+            passed,
+            "critical",
+            json.dumps(status),
+            "Exit Ollama maintenance mode and restore both outbound block rules" if not passed else "none",
         )
 
     def check_telegram_authentication(self) -> AuditCheck:

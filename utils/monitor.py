@@ -169,6 +169,33 @@ class SystemMonitor:
             return {"verified": False, "status": direct_error, "drive": drive, "source": "unverified"}
 
     @staticmethod
+    def ollama_firewall_status() -> dict[str, Any]:
+        if os.name != "nt":
+            return {"verified": False, "mode": "unsupported", "source": "Windows-only control"}
+        program_data = Path(os.getenv("PROGRAMDATA", r"C:\ProgramData"))
+        attestation_path = Path(
+            os.getenv(
+                "AI_AGENCY_BITLOCKER_ATTESTATION",
+                str(program_data / "AI_Agency" / "Security" / "bitlocker_attestation.json"),
+            )
+        )
+        try:
+            attestation = json.loads(attestation_path.read_text(encoding="utf-8-sig"))
+            checked_at = datetime.fromisoformat(str(attestation["checked_at"]).replace("Z", "+00:00"))
+            age_seconds = (datetime.now(timezone.utc) - checked_at.astimezone(timezone.utc)).total_seconds()
+            firewall = attestation.get("ollama_firewall", {})
+            verified = bool(firewall.get("verified")) and 0 <= age_seconds <= 108_000
+            return {
+                "verified": verified,
+                "mode": firewall.get("mode", "unconfigured"),
+                "rules": firewall.get("rules", []),
+                "source": "administrator-attestation",
+                "checked_at": attestation.get("checked_at"),
+            }
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            return {"verified": False, "mode": "unverified", "rules": [], "source": "unverified"}
+
+    @staticmethod
     def _process_name(pid: int | None) -> str:
         if pid is None:
             return "unknown"

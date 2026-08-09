@@ -27,6 +27,16 @@ The Aegis process must not run as administrator. Windows restricts live BitLocke
 - The verifier accepts Windows Device Encryption's `Used Space Only Encrypted` wording only when encryption is 100% and protection is on.
 - Missing, stale, partial, or unprotected status blocks ChromaDB and runtime startup.
 
+## Ollama controlled-maintenance policy
+
+Normal operation uses two program-scoped Windows Firewall rules to block outbound internet connections from Ollama Desktop and the Ollama server. The API remains bound to `127.0.0.1`, so local inference continues normally.
+
+- Maintenance mode is administrator-only and refuses to start while the Aegis runtime, dashboard, or project Python process is running.
+- Entering and exiting maintenance mode is recorded in an administrator-protected JSONL ledger.
+- Exiting maintenance mode restores both block rules and refreshes the security attestation.
+- The daily audit requires a fresh administrator attestation showing both rules enabled as outbound blocks.
+- Maintenance mode is only for approved application updates and model downloads. Sensitive workloads are prohibited until protected mode and the security audit are restored.
+
 ## Reporting and operating boundaries
 
 Do not open a network listener for ChromaDB, Ollama, Streamlit, or internal services. Streamlit and Ollama must bind to `127.0.0.1`. Do not paste client data, credentials, or private business records into an issue or public GitHub discussion. Rotate any credential that is accidentally exposed.
