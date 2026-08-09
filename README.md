@@ -90,6 +90,31 @@ python -m pip_audit --progress-spinner off --ignore-vuln PYSEC-2026-311
 
 ## Running
 
+### Aegis executive workspace
+
+Build the local React interface once after installing a current Node.js release and pnpm:
+
+```powershell
+cd frontend
+pnpm install --frozen-lockfile
+pnpm run build
+cd ..
+```
+
+Start the FastAPI control plane and built interface on loopback only:
+
+```powershell
+python run_aegis.py
+```
+
+Open `http://127.0.0.1:8000`. The workspace provides Executive Home, Agent Fleet, World Pulse, Opportunity Engine, Solution Factory, Approval Center, Security Sentinel, Voice Lounge, and Data Lab. Projects and tasks behave like local Codex-style workspaces; agents receive reusable skills, while plugins are controlled external capabilities.
+
+Set `AEGIS_PROJECT_ROOTS` to a semicolon-separated list of additional absolute project roots when Aegis needs to register code outside `AI_AGENCY_HOME`. The API refuses non-loopback clients and remote Ollama endpoints. Web research remains disabled while `AI_AGENCY_OFFLINE_MODE=true`, even after an individual research request is approved.
+
+See `docs/AEGIS_ARCHITECTURE.md` for boundaries, integration policy, and the implementation roadmap. Brand assets and logo directions are in `docs/brand/`.
+
+### Existing command center and scheduler
+
 Start the command center:
 
 ```powershell
@@ -110,6 +135,9 @@ The runtime performs a startup audit and stops if a critical control fails. Dail
 - `knowledge_pipeline/pipeline.py`: protected memory, clearance-aware retrieval, media learning, repository and product analysis.
 - `agents/base_agent.py`: local Ollama inference, client isolation, research, metrics, security context.
 - `agents/orchestrator.py`: Aegis orchestration, strategy, security response, intelligence, revenue, and mobile routing.
+- `aegis_core/api.py`: local-only FastAPI control plane and approval-gated operations.
+- `aegis_core/store.py`: encrypted project, task, agent, skill, plugin, and approval registry.
+- `frontend/`: Codex-style React executive workspace.
 - `agents/security/auditor.py`: daily evidence-based security checks and audit records.
 - `tools/mobile_commander.py`: whitelist-only Telegram commands and alerts.
 - `tools/intelligence_briefing.py`: public-source AI, competitor, and revenue intelligence.

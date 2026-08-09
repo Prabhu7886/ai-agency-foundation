@@ -122,6 +122,141 @@ CREATE TABLE IF NOT EXISTS mobile_sessions (
     commands_issued INTEGER NOT NULL DEFAULT 0,
     security_verified BOOLEAN NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS aegis_projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    root_path TEXT NOT NULL,
+    repository_url TEXT,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'archived')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_projects_status ON aegis_projects(status, updated_at);
+
+CREATE TABLE IF NOT EXISTS aegis_tasks (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES aegis_projects(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    prompt TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'planned'
+        CHECK(status IN ('planned', 'awaiting_approval', 'running', 'completed', 'failed', 'cancelled')),
+    risk_level TEXT NOT NULL DEFAULT 'low' CHECK(risk_level IN ('low', 'medium', 'high', 'critical')),
+    assigned_agent TEXT,
+    result_summary TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_tasks_project ON aegis_tasks(project_id, updated_at);
+
+CREATE TABLE IF NOT EXISTS aegis_agent_registry (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    role TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    model_policy TEXT NOT NULL DEFAULT 'local-auto',
+    status TEXT NOT NULL DEFAULT 'ready' CHECK(status IN ('ready', 'busy', 'paused', 'offline')),
+    prompt_version TEXT NOT NULL DEFAULT 'proposal-v1',
+    capabilities_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aegis_skill_registry (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    category TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    version TEXT NOT NULL DEFAULT '0.1.0',
+    status TEXT NOT NULL DEFAULT 'proposal' CHECK(status IN ('proposal', 'testing', 'active', 'disabled')),
+    risk_level TEXT NOT NULL DEFAULT 'low' CHECK(risk_level IN ('low', 'medium', 'high', 'critical')),
+    capabilities_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aegis_agent_skills (
+    agent_id TEXT NOT NULL REFERENCES aegis_agent_registry(id) ON DELETE CASCADE,
+    skill_id TEXT NOT NULL REFERENCES aegis_skill_registry(id) ON DELETE CASCADE,
+    assigned_at TEXT NOT NULL,
+    PRIMARY KEY(agent_id, skill_id)
+);
+
+CREATE TABLE IF NOT EXISTS aegis_plugin_registry (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    category TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'available' CHECK(status IN ('available', 'enabled', 'disabled', 'planned')),
+    connection_status TEXT NOT NULL DEFAULT 'not_connected',
+    requires_approval BOOLEAN NOT NULL DEFAULT 1,
+    data_policy TEXT NOT NULL DEFAULT 'local_only',
+    capabilities_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aegis_approvals (
+    id TEXT PRIMARY KEY,
+    project_id TEXT REFERENCES aegis_projects(id) ON DELETE SET NULL,
+    task_id TEXT REFERENCES aegis_tasks(id) ON DELETE SET NULL,
+    action TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    risk_level TEXT NOT NULL CHECK(risk_level IN ('low', 'medium', 'high', 'critical')),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'declined', 'expired')),
+    evidence_json TEXT NOT NULL DEFAULT '{}',
+    requested_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_approvals_status ON aegis_approvals(status, requested_at);
+
+CREATE TABLE IF NOT EXISTS aegis_world_pulse (
+    id TEXT PRIMARY KEY,
+    region TEXT NOT NULL,
+    category TEXT NOT NULL,
+    headline TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    source_url TEXT,
+    confidence FLOAT NOT NULL CHECK(confidence BETWEEN 0 AND 1),
+    impact_level TEXT NOT NULL DEFAULT 'monitor',
+    published_at TEXT,
+    collected_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aegis_opportunities (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    thesis TEXT NOT NULL,
+    allocation TEXT NOT NULL CHECK(allocation IN ('existing-80', 'explore-20')),
+    score FLOAT NOT NULL DEFAULT 0 CHECK(score BETWEEN 0 AND 100),
+    status TEXT NOT NULL DEFAULT 'watching',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aegis_solutions (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    problem TEXT NOT NULL,
+    audience TEXT NOT NULL DEFAULT '',
+    stage TEXT NOT NULL DEFAULT 'discover',
+    proof TEXT NOT NULL DEFAULT '',
+    owner_agent TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aegis_activity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    entity_type TEXT,
+    entity_id TEXT,
+    security_level TEXT NOT NULL DEFAULT 'internal',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_activity_time ON aegis_activity(created_at);
 """
 
 
@@ -188,6 +323,17 @@ class DatabaseSetup:
             "security_audit_log",
             "open_source_intel",
             "mobile_sessions",
+            "aegis_projects",
+            "aegis_tasks",
+            "aegis_agent_registry",
+            "aegis_skill_registry",
+            "aegis_agent_skills",
+            "aegis_plugin_registry",
+            "aegis_approvals",
+            "aegis_world_pulse",
+            "aegis_opportunities",
+            "aegis_solutions",
+            "aegis_activity",
         }
         missing = required - tables
         if missing:

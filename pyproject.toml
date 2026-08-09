@@ -14,7 +14,7 @@ dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["agents*", "dashboard*", "databases*", "knowledge_pipeline*", "tools*", "utils*"]
+include = ["aegis_core*", "agents*", "dashboard*", "databases*", "knowledge_pipeline*", "tools*", "utils*"]
 
 [tool.ruff]
 line-length = 120
