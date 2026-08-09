@@ -172,15 +172,20 @@ class SystemMonitor:
     def ollama_firewall_status() -> dict[str, Any]:
         if os.name != "nt":
             return {"verified": False, "mode": "unsupported", "source": "Windows-only control"}
+        return SystemMonitor._read_ollama_firewall_attestation()
+
+    @staticmethod
+    def _read_ollama_firewall_attestation(attestation_path: Path | None = None) -> dict[str, Any]:
+        """Validate a firewall attestation independently of the caller's platform."""
         program_data = Path(os.getenv("PROGRAMDATA", r"C:\ProgramData"))
-        attestation_path = Path(
+        resolved_path = attestation_path or Path(
             os.getenv(
                 "AI_AGENCY_BITLOCKER_ATTESTATION",
                 str(program_data / "AI_Agency" / "Security" / "bitlocker_attestation.json"),
             )
         )
         try:
-            attestation = json.loads(attestation_path.read_text(encoding="utf-8-sig"))
+            attestation = json.loads(resolved_path.read_text(encoding="utf-8-sig"))
             checked_at = datetime.fromisoformat(str(attestation["checked_at"]).replace("Z", "+00:00"))
             age_seconds = (datetime.now(timezone.utc) - checked_at.astimezone(timezone.utc)).total_seconds()
             firewall = attestation.get("ollama_firewall", {})

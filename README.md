@@ -52,6 +52,14 @@ powershell -ExecutionPolicy Bypass -File tools\windows\ollama_maintenance.ps1 -M
 
 Never process client or sensitive personal data in maintenance mode. After exiting, rerun `python -m agents.security.auditor` before restarting Aegis.
 
+Test encrypted backup recovery periodically while protected mode is active and Aegis is stopped:
+
+```powershell
+python -m tools.recovery_drill
+```
+
+The drill creates a real encrypted backup, restores it to an isolated temporary directory, verifies SQLCipher integrity and the expected Chroma collections, and removes the temporary restored copy. The encrypted backup remains under `backups` according to the configured retention policy.
+
 ## Installation
 
 Run these commands in PowerShell from `C:\AI_AGENCY`:
