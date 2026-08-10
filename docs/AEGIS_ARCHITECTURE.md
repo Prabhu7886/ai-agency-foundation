@@ -89,7 +89,7 @@ The Aegis layer keeps these inherited controls active:
 
 Local models own routine planning, analysis, private project context, and agent execution. Cloud specialists are exception paths for approved public or redacted work when they materially improve the result.
 
-Codex should be integrated through an explicit adapter, using either its local SDK/app-server interface or a controlled GitHub handoff. A plugin toggle alone must never impersonate a Codex login or claim that a Codex task ran.
+Codex is integrated through an explicit official app-server adapter and a controlled GitHub handoff. ChatGPT device login remains Codex-managed; Aegis stores neither passwords nor auth tokens. Every coding turn is rewritten, owner-approved, restricted to one registered root, workspace-write sandboxed, and network-disabled. A plugin toggle alone never impersonates a Codex login or claims that a Codex task ran.
 
 GitHub is the main external code launchpad. The implemented adapter verifies the registered origin and current `codex/` branch, stages only explicit project-relative paths, and supports commits, branch pushes, and draft pull requests after single-use owner approval. It exposes no merge, delete, force-push, arbitrary-shell, or branch-protection mutation path.
 
@@ -116,6 +116,9 @@ Implemented in the first vertical slice:
 - Controlled GitHub maintenance with registered-origin enforcement and single-use execution approvals.
 - Bounded full-page HTML/PDF source verification with publication-date provenance, methodology signals, and content hashes.
 - Streaming AI responses with encrypted conversation history and rewrite/first-token latency evidence.
+- Content-aware Llama, DeepSeek Coder, and Qwen routing with one-model-at-a-time VRAM control and visible route evidence.
+- Claim-level independent-domain corroboration and numeric-conflict preservation in opportunity reports.
+- Official Codex app-server authentication status, device-login UX, and approval-gated network-disabled engineering turns.
 - Foundation status and local model health.
 - Opportunity 80/20 and solution-stage surfaces.
 - Push-to-talk browser capture boundary.
@@ -124,9 +127,9 @@ Implemented in the first vertical slice:
 
 Next implementation slices:
 
-1. Add claim-level corroboration across full-page research evidence and scheduled World Pulse briefings.
-2. Complete Codex engineering authentication, redaction, and execution-evidence workflows.
-3. Add branch-check visibility and approval-gated review preparation without automated merge.
+1. Extend claim-level corroboration into scheduled World Pulse briefings and semantic claim matching.
+2. Add Codex diff review, redaction evidence, and approval-gated review preparation without automated merge.
+3. Add branch-check visibility and branch-protection evidence to GitHub controlled maintenance.
 4. Complete local speech-to-text behind the existing push-to-talk boundary.
 5. Expand Data Lab profiling, reversible recipes, and quality reports.
 6. Finish the agent/skill package format, evaluation gates, version promotion, and rollback.

@@ -27,7 +27,14 @@ class CodexAppServerAdapter:
             key=lambda item: item.stat().st_mtime,
             reverse=True,
         )
-        candidates = [Path(configured)] if configured else list(user_local)
+        aegis_local = sorted(
+            (Path.home() / "AppData" / "Local" / "Aegis" / "CodexCLI" / "node_modules" / ".pnpm").glob(
+                "@openai+codex@*-win32-x64/node_modules/@openai/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe"
+            ),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+        candidates = [Path(configured)] if configured else [*aegis_local, *user_local]
         discovered = shutil.which("codex")
         if discovered and not configured:
             candidates.append(Path(discovered))
@@ -40,21 +47,31 @@ class CodexAppServerAdapter:
         self._pending: dict[int, queue.Queue[dict[str, Any]]] = {}
         self._events: deque[dict[str, Any]] = deque(maxlen=2000)
         self._condition = threading.Condition()
+        self._authenticated: bool | None = None
 
     def status(self, check_account: bool = False) -> dict[str, Any]:
         if not self.executable:
             return {"installed": False, "connected": False, "protocol": "app-server-stdio"}
         if not check_account:
             running = bool(self._process and self._process.poll() is None)
-            return {"installed": True, "connected": running, "protocol": "app-server-stdio", "account": None}
+            return {
+                "installed": True,
+                "connected": running,
+                "authenticated": self._authenticated,
+                "protocol": "app-server-stdio",
+            }
         try:
             self._ensure_started()
             account = self._request("account/read", {"refreshToken": False}, timeout=20)
+            account_record = account.get("account")
+            self._authenticated = bool(account_record)
             return {
                 "installed": True,
                 "connected": True,
                 "protocol": "app-server-stdio",
-                "account": account.get("account"),
+                "authenticated": bool(account_record),
+                "account_type": account_record.get("type") if isinstance(account_record, dict) else None,
+                "plan_type": account_record.get("planType") if isinstance(account_record, dict) else None,
                 "requires_openai_auth": account.get("requiresOpenaiAuth"),
             }
         except Exception as exc:
@@ -151,7 +168,7 @@ class CodexAppServerAdapter:
         self._reader.start()
         self._request(
             "initialize",
-            {"clientInfo": {"name": "aegis_local_executive", "title": "Aegis", "version": "0.5.0"}},
+            {"clientInfo": {"name": "aegis_local_executive", "title": "Aegis", "version": "0.6.0"}},
             timeout=30,
         )
         self._notify("initialized", {})

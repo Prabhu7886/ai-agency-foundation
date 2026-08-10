@@ -14,6 +14,20 @@ models:
     vram_limit_mb: 7168
     context_window: 8192
     allow_remote_provider: false
+    routing:
+      enabled: true
+      strategy: content_aware
+      one_model_at_a_time: true
+      routes:
+        general:
+          model: llama3.1:8b
+          label: Llama 3.1 8B
+        coding:
+          model: deepseek-coder-v2:16b
+          label: DeepSeek Coder V2 16B
+        analysis:
+          model: qwen2.5:14b
+          label: Qwen 2.5 14B
   specialist_default:
     primary: llama3.2:3b
     fallback:

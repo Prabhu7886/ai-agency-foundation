@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -26,7 +25,7 @@ class WorldPulseService:
     def ingest(self, research: dict[str, Any], category: str, regions: list[str]) -> dict[str, Any]:
         accepted: list[dict[str, Any]] = []
         rejected = 0
-        fingerprints: Counter[str] = Counter()
+        fingerprint_domains: dict[str, set[str]] = {}
         parsed: list[dict[str, Any]] = []
         for finding in research.get("findings", []):
             source = self._source(finding)
@@ -35,7 +34,7 @@ class WorldPulseService:
                 continue
             fingerprint = self._fingerprint(str(finding.get("title", "")))
             source["fingerprint"] = fingerprint
-            fingerprints[fingerprint] += 1
+            fingerprint_domains.setdefault(fingerprint, set()).add(str(source["domain"]))
             parsed.append({"finding": finding, "source": source})
 
         region = ", ".join(regions[:10]) if regions else "Global"
@@ -44,7 +43,7 @@ class WorldPulseService:
             if source["source_tier"] == "primary":
                 verification = "primary_source"
                 confidence = 0.78
-            elif fingerprints[source["fingerprint"]] >= 2:
+            elif len(fingerprint_domains[source["fingerprint"]]) >= 2:
                 verification = "corroborated"
                 confidence = 0.7
             elif source["source_tier"] == "established":

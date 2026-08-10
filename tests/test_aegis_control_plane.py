@@ -12,6 +12,7 @@ from aegis_core.codex_adapter import CodexAppServerAdapter
 from aegis_core.data_lab import DataLabService
 from aegis_core.github_adapter import GitHubAdapter
 from aegis_core.model_gateway import LocalModelGateway
+from aegis_core.model_router import LocalModelRouter
 from aegis_core.opportunity_reports import OpportunityReportService
 from aegis_core.prompt_compiler import PromptCompiler
 from aegis_core.research import WebResearchService
@@ -19,6 +20,7 @@ from aegis_core.schemas import ChatRequest
 from aegis_core.store import AegisStore
 from aegis_core.world_pulse import WorldPulseService
 from databases.setup_databases import DatabaseSetup
+from tools.install_model_routing_policy import install as install_model_routing_policy
 
 
 @pytest.fixture()
@@ -133,6 +135,76 @@ def test_foundation_guard_blocks_sensitive_research_and_unregistered_roots(
 def test_model_gateway_rejects_remote_ollama() -> None:
     with pytest.raises(FoundationViolation, match="loopback"):
         LocalModelGateway("http://example.com:11434")
+
+
+def test_executive_prompt_does_not_turn_missing_measurements_into_low_risk() -> None:
+    prompt = LocalModelGateway._executive_prompt("Assess concentration risk", {})
+    assert "Never classify a risk as low merely because measurements are missing" in prompt
+
+
+def test_model_router_selects_specialists_and_unloads_previous_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    models_path = config / "models.yaml"
+    models_path.write_text(yaml.safe_dump({"models": {"aegis": {"vram_limit_mb": 7168}}}), encoding="utf-8")
+    monkeypatch.setenv("AI_AGENCY_HOME", str(tmp_path))
+
+    class FakeResponse:
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return self.payload
+
+    models = [
+        {"name": "llama3.1:8b", "size": 4_900_000_000},
+        {"name": "deepseek-coder-v2:16b", "size": 8_900_000_000},
+        {"name": "qwen2.5:14b", "size": 8_700_000_000},
+    ]
+
+    def fake_get(url: str, **_kwargs: object) -> FakeResponse:
+        if url.endswith("/api/tags"):
+            return FakeResponse({"models": models})
+        return FakeResponse({"models": [{"name": "llama3.1:8b", "size_vram": 4_900_000_000}]})
+
+    unloaded: list[str] = []
+
+    def fake_post(_url: str, **kwargs: object) -> FakeResponse:
+        unloaded.append(str(kwargs["json"]["model"]))  # type: ignore[index]
+        assert kwargs["json"]["keep_alive"] == 0  # type: ignore[index]
+        return FakeResponse({})
+
+    monkeypatch.setattr("aegis_core.model_router.requests.get", fake_get)
+    monkeypatch.setattr("aegis_core.model_router.requests.post", fake_post)
+    router = LocalModelRouter(config_path=models_path)
+
+    coding = router.select("Debug this Python FastAPI endpoint and add pytest coverage")
+    assert coding["model"] == "deepseek-coder-v2:16b"
+    assert coding["category"] == "coding"
+    assert coding["resource_fit"] == "hybrid_gpu_ram"
+    assert router.select("Analyze the market and compare financial risks")["model"] == "qwen2.5:14b"
+    assert router.select("Talk through this idea with me")["model"] == "llama3.1:8b"
+    assert router.prepare(coding)["unloaded_models"] == ["llama3.1:8b"]
+    assert unloaded == ["llama3.1:8b"]
+
+
+def test_model_routing_policy_installer_preserves_existing_configuration(tmp_path: Path) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    path = config / "models.yaml"
+    path.write_text(yaml.safe_dump({"models": {"aegis": {"primary": "llama3.1:8b"}}}), encoding="utf-8")
+
+    assert install_model_routing_policy(tmp_path) == path
+    installed = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert installed["models"]["aegis"]["primary"] == "llama3.1:8b"
+    assert installed["models"]["aegis"]["routing"]["routes"]["coding"]["model"] == "deepseek-coder-v2:16b"
+    assert path.with_suffix(".yaml.pre-model-routing").is_file()
 
 
 def test_prompt_compiler_fails_closed_to_bounded_fallback() -> None:
@@ -361,6 +433,21 @@ def test_world_pulse_preserves_source_quality_and_rejects_local_urls(store: Aegi
     assert result["signals"][0]["verification_state"] == "primary_source"
 
 
+def test_world_pulse_does_not_call_same_domain_duplicates_corroborated(store: AegisStore) -> None:
+    result = WorldPulseService(store).ingest(
+        {
+            "findings": [
+                {"title": "AI buyer demand rises", "url": "https://reuters.com/one", "summary": "First result."},
+                {"title": "AI buyer demand rises", "url": "https://reuters.com/two", "summary": "Duplicate result."},
+            ]
+        },
+        "markets",
+        ["Global"],
+    )
+
+    assert {item["verification_state"] for item in result["signals"]} == {"single_source"}
+
+
 def test_approved_public_research_is_narrowly_allowed_offline(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -539,6 +626,43 @@ def test_opportunity_report_requires_verified_page_evidence_for_supported_gate()
     assert report["quality_gate"] == "supported_discovery"
     assert report["source_metrics"]["verified_page_count"] == 2
     assert report["source_metrics"]["verified_date_count"] == 2
+
+
+def test_opportunity_report_flags_conflicting_numeric_claims_for_reconciliation() -> None:
+    signals = [
+        {
+            "headline": "Small-business AI adoption rose in 2026",
+            "summary": "The survey estimates AI adoption at 41 percent among small businesses.",
+            "source_url": "https://agency-a.gov/adoption",
+            "domain": "agency-a.gov",
+            "source_tier": "primary",
+            "verification_state": "primary_source",
+            "confidence": 0.78,
+            "published_at": "2026-07-01",
+            "page_verification_state": "verified_html",
+            "date_source": "page_metadata",
+            "methodology_terms": ["survey"],
+        },
+        {
+            "headline": "Small-business AI adoption rose in 2026",
+            "summary": "The survey estimates AI adoption at 63 percent among small businesses.",
+            "source_url": "https://agency-b.gov/adoption",
+            "domain": "agency-b.gov",
+            "source_tier": "primary",
+            "verification_state": "primary_source",
+            "confidence": 0.78,
+            "published_at": "2026-07-02",
+            "page_verification_state": "verified_html",
+            "date_source": "page_metadata",
+            "methodology_terms": ["survey"],
+        },
+    ]
+
+    report = OpportunityReportService().build("AI adoption", {"source_count": 2}, signals)
+    assert report["claim_assessments"][0]["status"] == "needs_reconciliation"
+    assert report["claim_assessments"][0]["metric_values"] == ["41 percent", "63 percent"]
+    assert report["source_metrics"]["unresolved_claim_count"] == 1
+    assert report["quality_gate"] == "mixed_quality_discovery"
 
 
 def test_data_lab_preserves_raw_and_reports_transformations(store: AegisStore, tmp_path: Path) -> None:

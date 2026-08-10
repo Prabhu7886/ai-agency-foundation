@@ -1,4 +1,4 @@
-import type { Bootstrap, Conversation, ConversationMessage, GitHubAction, GitHubStatus, Project, PromptCompilation, Task } from "./types";
+import type { Approval, Bootstrap, CodexStatus, Conversation, ConversationMessage, GitHubAction, GitHubStatus, ModelRouting, Project, PromptCompilation, Task } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -77,7 +77,7 @@ export function chat(
 }
 
 export type ChatStreamEvent = {
-  type: "start" | "status" | "compilation" | "token" | "done" | "error";
+  type: "start" | "status" | "routing" | "compilation" | "token" | "done" | "error";
   status?: string;
   content?: string;
   detail?: string;
@@ -85,6 +85,7 @@ export type ChatStreamEvent = {
   user_message?: ConversationMessage;
   assistant_message?: ConversationMessage;
   compilation?: PromptCompilation;
+  routing?: ModelRouting;
   task?: Task;
   provider?: string;
   model?: string;
@@ -177,6 +178,26 @@ export function requestGitHubOperation(payload: {
 
 export function executeGitHubOperation(approvalId: string): Promise<Record<string, unknown>> {
   return request(`/api/github/requests/${approvalId}/execute`, { method: "POST" });
+}
+
+export function getCodexStatus(): Promise<CodexStatus> {
+  return request("/api/codex/status");
+}
+
+export function requestCodexDeviceLogin(): Promise<{ approval: Approval }> {
+  return request("/api/codex/login/device", { method: "POST" });
+}
+
+export function executeCodexDeviceLogin(approvalId: string): Promise<{ loginId: string; verificationUrl: string; userCode: string }> {
+  return request(`/api/codex/login/device/${approvalId}/execute`, { method: "POST" });
+}
+
+export function requestCodexTask(projectId: string, message: string): Promise<{ task: Task; approval: Approval }> {
+  return request("/api/codex/requests", { method: "POST", body: JSON.stringify({ project_id: projectId, message }) });
+}
+
+export function executeCodexTask(approvalId: string): Promise<Record<string, unknown>> {
+  return request(`/api/codex/requests/${approvalId}/execute`, { method: "POST" });
 }
 
 export function createOpportunity(payload: Record<string, unknown>): Promise<Record<string, unknown>> {

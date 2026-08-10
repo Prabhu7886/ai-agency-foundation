@@ -5,11 +5,19 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+import re
 from typing import Any
 
 
 class OpportunityReportService:
     """Turn accepted public signals into a bounded, decision-ready report."""
+
+    STOPWORDS = {
+        "about", "after", "also", "been", "before", "being", "between", "could", "from",
+        "have", "into", "more", "most", "official", "public", "report", "reports", "source",
+        "that", "their", "there", "these", "they", "this", "through", "under", "using", "were",
+        "what", "when", "where", "which", "while", "with", "would",
+    }
 
     def build(self, query: str, research: dict[str, Any], signals: list[dict[str, Any]]) -> dict[str, Any]:
         if not signals:
@@ -55,28 +63,41 @@ class OpportunityReportService:
             1 for source in source_rows if source.get("date_source") in {"page_metadata", "structured_data", "time_element"}
         )
         methodology_source_count = sum(1 for source in source_rows if source["methodology_terms"])
-        if verified_primary_count >= 2 and verified_date_count >= 1 and methodology_source_count >= 1:
+        claim_assessments = self._assess_claims(source_rows)
+        claim_counts = Counter(str(item["status"]) for item in claim_assessments)
+        corroborated_claim_count = claim_counts.get("corroborated", 0)
+        unresolved_claim_count = claim_counts.get("needs_reconciliation", 0)
+        if (
+            verified_primary_count >= 2
+            and verified_date_count >= 1
+            and methodology_source_count >= 1
+            and corroborated_claim_count >= 1
+            and unresolved_claim_count == 0
+        ):
             quality_gate = "supported_discovery"
         elif high_trust_source_count:
             quality_gate = "mixed_quality_discovery"
         else:
             quality_gate = "discovery_only"
         primary_lane = research.get("research_lanes", {}).get("primary", {})
+        source_by_id = {source["id"]: source for source in source_rows}
         findings = [
             {
-                "headline": source["title"],
-                "evidence": source["summary"],
-                "source_ids": [source["id"]],
-                "confidence": source["confidence"],
+                "headline": assessment["claim"],
+                "evidence": " ".join(
+                    source_by_id[source_id]["summary"] for source_id in assessment["source_ids"]
+                )[:3000],
+                "source_ids": assessment["source_ids"],
+                "confidence": assessment["confidence"],
                 "implication": (
-                    "The full source page was fetched and exposed methodology signals; review the actual method and definitions before treating the claim as decision-grade."
-                    if source["source_tier"] == "primary" and source["page_verification_state"].startswith("verified_") and source["methodology_terms"]
-                    else "Review the linked primary source and its methodology before treating the excerpt as decision-grade."
-                    if source["source_tier"] == "primary"
+                    "Independent sources report materially different numeric values; reconcile definitions, periods, and methodology before using this claim."
+                    if assessment["status"] == "needs_reconciliation"
+                    else "Multiple independent domains make this a corroborated discovery claim; review primary methods before treating it as decision-grade."
+                    if assessment["status"] == "corroborated"
                     else "Validate whether this public signal maps to a painful, payable customer problem before investing."
                 ),
             }
-            for source in source_rows[:6]
+            for assessment in claim_assessments[:6]
         ]
         return {
             "title": f"Opportunity research: {query[:120]}",
@@ -91,9 +112,11 @@ class OpportunityReportService:
                 f"Publication-date coverage is {dated_source_count}/{source_count}; {freshness_counts.get('current', 0)} current, {freshness_counts.get('recent', 0)} recent, {freshness_counts.get('stale', 0)} stale, {freshness_counts.get('future_dated', 0)} future-dated, and {freshness_counts.get('unknown', 0)} unknown-date sources.",
                 f"Full-page verification succeeded for {verified_page_count}/{source_count} sources; {verified_date_count} sources exposed page date metadata and {methodology_source_count} sources exposed methodology signals.",
                 f"Verification mix: {verification_counts.get('primary_source', 0)} primary-source, {verification_counts.get('corroborated', 0)} corroborated, and {verification_counts.get('single_source', 0)} single-source signals.",
+                f"Claim-level comparison found {corroborated_claim_count} independently corroborated claims, {unresolved_claim_count} numeric conflicts requiring reconciliation, and {claim_counts.get('single_source', 0)} single-source claims.",
                 "Revenue, willingness to pay, market size, and execution cost remain unverified and must not be treated as facts.",
             ],
             "key_findings": findings,
+            "claim_assessments": claim_assessments,
             "recommended_next_steps": [
                 "Define the narrowest customer segment and the expensive problem this opportunity would solve.",
                 "Run at least five evidence-recorded customer interviews before assigning a revenue score.",
@@ -111,6 +134,7 @@ class OpportunityReportService:
                 "The official-source search lane is a discovery aid; the accepted domain tier, publication date, and linked methodology determine trust.",
                 "Missing or unparsable publication dates are labeled unknown rather than assumed current.",
                 "Source diversity does not prove customer demand or commercial viability.",
+                "Claim matching is a deterministic lexical comparison. It helps surface corroboration and possible conflicts, but a human must review definitions and methodology.",
             ],
             "source_metrics": {
                 "provider_result_count": int(research.get("source_count", source_count)),
@@ -129,9 +153,73 @@ class OpportunityReportService:
                 "verified_primary_count": verified_primary_count,
                 "verified_date_count": verified_date_count,
                 "methodology_source_count": methodology_source_count,
+                "corroborated_claim_count": corroborated_claim_count,
+                "unresolved_claim_count": unresolved_claim_count,
+                "single_source_claim_count": claim_counts.get("single_source", 0),
             },
             "sources": source_rows,
         }
+
+    @classmethod
+    def _assess_claims(cls, sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        clusters: list[dict[str, Any]] = []
+        for source in sources:
+            terms = cls._claim_terms(f"{source['title']} {source['summary']}")
+            best: dict[str, Any] | None = None
+            best_score = 0.0
+            for cluster in clusters:
+                union = terms | cluster["terms"]
+                score = len(terms & cluster["terms"]) / len(union) if union else 0.0
+                if score > best_score:
+                    best, best_score = cluster, score
+            if best is not None and best_score >= 0.28:
+                best["sources"].append(source)
+                best["terms"].update(terms)
+            else:
+                clusters.append({"sources": [source], "terms": set(terms)})
+
+        assessments: list[dict[str, Any]] = []
+        for index, cluster in enumerate(clusters, start=1):
+            rows = cluster["sources"]
+            domains = sorted({str(row["domain"]) for row in rows if row["domain"] != "unknown"})
+            metric_sets = [tuple(sorted(cls._metric_values(f"{row['title']} {row['summary']}"))) for row in rows]
+            distinct_metrics = sorted({value for values in metric_sets for value in values})
+            nonempty_sets = {values for values in metric_sets if values}
+            if len(domains) >= 2 and len(nonempty_sets) > 1:
+                status = "needs_reconciliation"
+            elif len(domains) >= 2:
+                status = "corroborated"
+            else:
+                status = "single_source"
+            assessments.append(
+                {
+                    "id": f"C{index}",
+                    "claim": str(rows[0]["title"]),
+                    "status": status,
+                    "source_ids": [str(row["id"]) for row in rows],
+                    "independent_domains": domains,
+                    "metric_values": distinct_metrics,
+                    "confidence": round(sum(float(row["confidence"]) for row in rows) / len(rows), 2),
+                }
+            )
+        return assessments
+
+    @classmethod
+    def _claim_terms(cls, text: str) -> set[str]:
+        return {
+            word
+            for word in re.findall(r"[a-z0-9]+", text.lower())
+            if len(word) >= 3 and word not in cls.STOPWORDS and not word.isdigit()
+        }
+
+    @staticmethod
+    def _metric_values(text: str) -> set[str]:
+        pattern = re.compile(
+            r"(?:[$€£]\s?\d+(?:\.\d+)?(?:\s?(?:million|billion|trillion|[mbt]))?|"
+            r"\d+(?:\.\d+)?\s?(?:%|percent|percentage points?|million|billion|trillion|bps|basis points?))",
+            re.IGNORECASE,
+        )
+        return {re.sub(r"\s+", " ", value.lower()).strip() for value in pattern.findall(text)}
 
     @staticmethod
     def _freshness_state(value: Any) -> str:

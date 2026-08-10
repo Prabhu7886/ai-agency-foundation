@@ -24,6 +24,7 @@ from aegis_core.codex_adapter import CodexAppServerAdapter
 from aegis_core.data_lab import DataLabService
 from aegis_core.github_adapter import GitHubAdapter
 from aegis_core.model_gateway import LocalModelGateway
+from aegis_core.model_router import LocalModelRouter
 from aegis_core.opportunity_reports import OpportunityReportService
 from aegis_core.prompt_compiler import PromptCompiler
 from aegis_core.research import WebResearchService
@@ -96,6 +97,8 @@ def create_app(
     guard = guard or FoundationGuard()
     store = store or AegisStore()
     model_gateway = model_gateway or LocalModelGateway(os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"))
+    model_router = LocalModelRouter(model_gateway.endpoint)
+    model_turn_lock = asyncio.Lock()
     prompt_compiler = PromptCompiler(model_gateway)
     research = WebResearchService(guard)
     github = GitHubAdapter(guard)
@@ -117,7 +120,7 @@ def create_app(
 
     app = FastAPI(
         title="Aegis Local Executive API",
-        version="0.5.0",
+        version="0.6.0",
         description="Local-first executive control plane built on the AI Agency security foundation.",
         lifespan=lifespan,
         docs_url="/api/docs" if os.getenv("AEGIS_ENABLE_API_DOCS", "false").lower() == "true" else None,
@@ -126,6 +129,7 @@ def create_app(
     app.state.store = store
     app.state.guard = guard
     app.state.model_gateway = model_gateway
+    app.state.model_router = model_router
     app.add_middleware(LoopbackOnlyMiddleware, guard=guard)
     app.add_middleware(
         CORSMiddleware,
@@ -162,9 +166,9 @@ def create_app(
         plugins = {item["id"]: item for item in store.list_plugins()}
         github_plugin = plugins.get("plugin-github", {})
         codex_plugin = plugins.get("plugin-codex", {})
-        local_status = await asyncio.to_thread(model_gateway.health)
+        local_status = await asyncio.to_thread(model_router.status)
         return {
-            "version": "0.5.0",
+            "version": "0.6.0",
             "workspaces": [item["label"] for item in WORKSPACES],
             "overview": store.overview(),
             "agents": [
@@ -188,6 +192,7 @@ def create_app(
             },
             "implemented_capabilities": [
                 "Local Ollama chat with token streaming and automatic bounded prompt compilation",
+                "Content-aware single-model routing across Llama, DeepSeek Coder, and Qwen",
                 "Encrypted SQLCipher conversation threads that persist across restarts",
                 "Single-use approval execution ledger with expiry",
                 "One-way task lifecycle enforcement",
@@ -199,9 +204,11 @@ def create_app(
             "integrations": {
                 "ollama": {
                     "state": "connected" if local_status.get("available") else "unavailable",
-                    "model": model_gateway.model,
+                    "model": local_status.get("model"),
                     "loopback": True,
                     "gpu_accelerated": bool(local_status.get("gpu_accelerated")),
+                    "routing_enabled": bool(local_status.get("routing_enabled")),
+                    "active_models": local_status.get("active_models", []),
                 },
                 "github": {
                     "state": github_plugin.get("connection_status", "not_connected"),
@@ -227,7 +234,7 @@ def create_app(
             "status": "ok",
             "local_only": True,
             "service": "aegis",
-            "version": "0.5.0",
+            "version": "0.6.0",
             "database": "sqlcipher-required",
             "prompt_compiler": "required",
         }
@@ -248,6 +255,14 @@ def create_app(
     async def bootstrap() -> dict[str, Any]:
         projects = store.list_projects()
         github_project = projects[0] if projects else None
+        codex_state = await asyncio.to_thread(codex.status, True)
+        plugins = store.list_plugins()
+        codex_plugin = next((item for item in plugins if item["id"] == "plugin-codex"), {})
+        if codex_state.get("authenticated") is True and (
+            codex_plugin.get("status") != "enabled" or codex_plugin.get("connection_status") != "connected"
+        ):
+            store.set_plugin_status("plugin-codex", "enabled", "connected")
+            plugins = store.list_plugins()
         return {
             "brand": {
                 "name": "Aegis",
@@ -261,7 +276,7 @@ def create_app(
             "conversations": store.list_conversations(include_archived=True),
             "agents": store.list_agents(),
             "skills": store.list_skills(),
-            "plugins": store.list_plugins(),
+            "plugins": plugins,
             "approvals": store.list_approvals(),
             "world_pulse": store.list_world_pulse(),
             "research_reports": store.list_research_reports(),
@@ -269,8 +284,8 @@ def create_app(
             "solutions": store.list_solutions(),
             "activity": store.list_activity(),
             "foundation": guard.status(),
-            "local_model": model_gateway.health(),
-            "integrations": {"github": github.status(github_project), "codex": codex.status()},
+            "local_model": model_router.status(),
+            "integrations": {"github": github.status(github_project), "codex": codex_state},
         }
 
     @app.get("/api/projects", dependencies=[Depends(require_session)])
@@ -530,6 +545,7 @@ def create_app(
         async def event_stream() -> AsyncIterator[str]:
             request_started = perf_counter()
             compilation: dict[str, Any] | None = None
+            route: dict[str, Any] | None = None
             answer_parts: list[str] = []
             token_count = 0
             generation_started: float | None = None
@@ -541,40 +557,57 @@ def create_app(
                         "conversation": conversation_item,
                         "user_message": user_message,
                         "task": task,
-                        "status": "Rewriting your request into a bounded execution contract",
+                        "status": "Selecting the best approved local model",
                     }
                 )
-                project_context = {
-                    key: project.get(key)
-                    for key in ("id", "name", "description", "repository_url")
-                }
-                compilation = await asyncio.to_thread(prompt_compiler.compile, payload.message, project_context)
-                store.save_prompt_compilation(task["id"], compilation)
-                yield encode_event({"type": "compilation", "compilation": compilation})
-                yield encode_event({"type": "status", "status": "Thinking with the approved local model"})
-                runtime_context = await runtime_snapshot(project)
-                model_context = {
-                    "project": project_context,
-                    "aegis_runtime": runtime_context,
-                    "conversation_history": history,
-                    "prompt_compiler": {
-                        "objective": compilation["objective"],
-                        "risk_level": compilation["risk_level"],
-                    },
-                }
-                generation_started = perf_counter()
-                async for model_event in iterate_in_threadpool(
-                    model_gateway.stream_chat(compilation["compiled_prompt"], model_context)
-                ):
-                    if model_event.get("type") == "token":
-                        token = str(model_event.get("content", ""))
-                        if token:
-                            if first_token_ms is None:
-                                first_token_ms = round((perf_counter() - generation_started) * 1000)
-                            answer_parts.append(token)
-                            yield encode_event({"type": "token", "content": token})
-                    elif model_event.get("type") == "done":
-                        token_count = int(model_event.get("tokens", 0))
+                async with model_turn_lock:
+                    route = await asyncio.to_thread(model_router.select, payload.message)
+                    switch = await asyncio.to_thread(model_router.prepare, route)
+                    route = {**route, **switch}
+                    selected_gateway = model_router.gateway(route)
+                    selected_compiler = PromptCompiler(selected_gateway)
+                    yield encode_event(
+                        {
+                            "type": "routing",
+                            "routing": route,
+                            "model": selected_gateway.model,
+                            "status": f"{route['label']} selected: {route['reason']}",
+                        }
+                    )
+                    project_context = {
+                        key: project.get(key)
+                        for key in ("id", "name", "description", "repository_url")
+                    }
+                    yield encode_event({"type": "status", "status": "Rewriting your request into a bounded execution contract"})
+                    compilation = await asyncio.to_thread(selected_compiler.compile, payload.message, project_context)
+                    compilation["model_routing"] = route
+                    store.save_prompt_compilation(task["id"], compilation)
+                    yield encode_event({"type": "compilation", "compilation": compilation})
+                    yield encode_event({"type": "status", "status": f"Thinking with {route['label']}"})
+                    runtime_context = await runtime_snapshot(project)
+                    model_context = {
+                        "project": project_context,
+                        "aegis_runtime": runtime_context,
+                        "conversation_history": history,
+                        "prompt_compiler": {
+                            "objective": compilation["objective"],
+                            "risk_level": compilation["risk_level"],
+                        },
+                        "model_routing": route,
+                    }
+                    generation_started = perf_counter()
+                    async for model_event in iterate_in_threadpool(
+                        selected_gateway.stream_chat(compilation["compiled_prompt"], model_context)
+                    ):
+                        if model_event.get("type") == "token":
+                            token = str(model_event.get("content", ""))
+                            if token:
+                                if first_token_ms is None:
+                                    first_token_ms = round((perf_counter() - generation_started) * 1000)
+                                answer_parts.append(token)
+                                yield encode_event({"type": "token", "content": token})
+                        elif model_event.get("type") == "done":
+                            token_count = int(model_event.get("tokens", 0))
                 answer = "".join(answer_parts).strip()
                 if not answer:
                     raise RuntimeError("Ollama returned an empty streamed response")
@@ -584,7 +617,7 @@ def create_app(
                     answer,
                     task_id=task["id"],
                     provider="ollama-local",
-                    model=model_gateway.model,
+                    model=str(route["model"]),
                     token_count=token_count,
                     compilation=compilation,
                 )
@@ -596,7 +629,8 @@ def create_app(
                         "assistant_message": assistant_message,
                         "task": completed_task,
                         "provider": "ollama-local",
-                        "model": model_gateway.model,
+                        "model": route["model"],
+                        "routing": route,
                         "tokens": token_count,
                         "timings": {
                             "prompt_rewrite_ms": int(compilation.get("rewrite_duration_ms", 0)),
@@ -621,7 +655,7 @@ def create_app(
                     safe_answer,
                     task_id=task["id"],
                     provider="none",
-                    model=model_gateway.model,
+                    model=str(route["model"]) if route else model_gateway.model,
                     token_count=token_count,
                     compilation=compilation,
                     error=message,
@@ -660,21 +694,28 @@ def create_app(
         )
         try:
             project_context = {key: project.get(key) for key in ("id", "name", "description", "repository_url")}
-            compilation = await asyncio.to_thread(prompt_compiler.compile, payload.message, project_context)
-            store.save_prompt_compilation(task["id"], compilation)
-            runtime_context = await runtime_snapshot(project)
-            result = await asyncio.to_thread(
-                model_gateway.chat,
-                compilation["compiled_prompt"],
-                {
-                    "project": project_context,
-                    "aegis_runtime": runtime_context,
-                    "conversation_history": [item.model_dump() for item in payload.history],
-                    "prompt_compiler": {"objective": compilation["objective"], "risk_level": compilation["risk_level"]},
-                },
-            )
+            async with model_turn_lock:
+                route = await asyncio.to_thread(model_router.select, payload.message)
+                switch = await asyncio.to_thread(model_router.prepare, route)
+                route = {**route, **switch}
+                selected_gateway = model_router.gateway(route)
+                compilation = await asyncio.to_thread(PromptCompiler(selected_gateway).compile, payload.message, project_context)
+                compilation["model_routing"] = route
+                store.save_prompt_compilation(task["id"], compilation)
+                runtime_context = await runtime_snapshot(project)
+                result = await asyncio.to_thread(
+                    selected_gateway.chat,
+                    compilation["compiled_prompt"],
+                    {
+                        "project": project_context,
+                        "aegis_runtime": runtime_context,
+                        "conversation_history": [item.model_dump() for item in payload.history],
+                        "prompt_compiler": {"objective": compilation["objective"], "risk_level": compilation["risk_level"]},
+                        "model_routing": route,
+                    },
+                )
             store.update_task(task["id"], "completed", result["answer"][:10_000])
-            return {"task": store.get_task(task["id"]), "compilation": compilation, **result}
+            return {"task": store.get_task(task["id"]), "compilation": compilation, "routing": route, **result}
         except Exception as exc:
             message = f"Local model unavailable: {str(exc)[:500]}"
             store.update_task(task["id"], "failed", message)
@@ -798,7 +839,7 @@ def create_app(
 
     @app.get("/api/security/foundation", dependencies=[Depends(require_session)])
     async def foundation_status() -> dict[str, Any]:
-        return {"policy": guard.status(), "local_model": model_gateway.health()}
+        return {"policy": guard.status(), "local_model": model_router.status()}
 
     @app.get("/api/github/status/{project_id}", dependencies=[Depends(require_session)])
     async def github_status(project_id: str) -> dict[str, Any]:
@@ -850,7 +891,12 @@ def create_app(
 
     @app.get("/api/codex/status", dependencies=[Depends(require_session)])
     async def codex_status() -> dict[str, Any]:
-        return await asyncio.to_thread(codex.status, True)
+        result = await asyncio.to_thread(codex.status, True)
+        if result.get("authenticated") is True:
+            plugin = next((item for item in store.list_plugins() if item["id"] == "plugin-codex"), {})
+            if plugin.get("status") != "enabled" or plugin.get("connection_status") != "connected":
+                store.set_plugin_status("plugin-codex", "enabled", "connected")
+        return result
 
     @app.post("/api/codex/login/device", dependencies=[Depends(require_session)])
     async def codex_device_login() -> dict[str, Any]:

@@ -1,4 +1,15 @@
 export type Workspace = { id: string; label: string; description: string };
+export type ModelRouting = {
+  category: "general" | "coding" | "analysis";
+  model: string;
+  label: string;
+  reason: string;
+  resource_fit: "gpu" | "hybrid_gpu_ram";
+  fallback_from?: string | null;
+  already_loaded?: boolean;
+  switched?: boolean;
+  unloaded_models?: string[];
+};
 export type PromptCompilation = {
   id?: string;
   original_prompt: string;
@@ -11,6 +22,7 @@ export type PromptCompilation = {
   compiler_mode: string;
   model?: string | null;
   rewrite_duration_ms?: number;
+  model_routing?: ModelRouting;
   created_at?: string;
 };
 export type Project = {
@@ -138,6 +150,7 @@ export type ResearchReport = {
     quality_gate?: string;
     executive_summary: string[];
     key_findings: Array<{ headline: string; evidence: string; source_ids: string[]; confidence: number; implication: string }>;
+    claim_assessments?: Array<{ id: string; claim: string; status: "corroborated" | "needs_reconciliation" | "single_source"; source_ids: string[]; independent_domains: string[]; metric_values: string[]; confidence: number }>;
     recommended_next_steps: string[];
     further_questions: string[];
     caveats: string[];
@@ -158,6 +171,16 @@ export type GitHubStatus = {
   };
 };
 export type GitHubAction = "verify_auth" | "create_branch" | "stage_files" | "commit" | "push" | "draft_pr";
+export type CodexStatus = {
+  installed: boolean;
+  connected: boolean;
+  authenticated?: boolean;
+  protocol: string;
+  account_type?: string | null;
+  plan_type?: string | null;
+  requires_openai_auth?: boolean;
+  error?: string;
+};
 export type Bootstrap = {
   brand: { name: string; descriptor: string; motto: string; creed: string };
   workspaces: Workspace[];
@@ -180,6 +203,18 @@ export type Bootstrap = {
   solutions: Array<Record<string, unknown>>;
   activity: Activity[];
   foundation: Record<string, unknown>;
-  local_model: { available: boolean; model: string; endpoint: string; loaded?: boolean; gpu_accelerated?: boolean; size_vram?: number; error?: string };
-  integrations: { github: GitHubStatus; codex: Record<string, unknown> };
+  local_model: {
+    available: boolean;
+    model: string;
+    endpoint: string;
+    loaded?: boolean;
+    gpu_accelerated?: boolean;
+    size_vram?: number;
+    routing_enabled?: boolean;
+    one_model_at_a_time?: boolean;
+    active_models?: string[];
+    routes?: Record<string, { model: string; label: string; installed: boolean; resource_fit: string }>;
+    error?: string;
+  };
+  integrations: { github: GitHubStatus; codex: CodexStatus };
 };

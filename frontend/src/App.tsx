@@ -56,9 +56,14 @@ import {
   createSkill,
   deleteConversation,
   decideApproval,
+  executeCodexDeviceLogin,
+  executeCodexTask,
   executeResearch,
   executeGitHubOperation,
+  getCodexStatus,
   getConversation,
+  requestCodexDeviceLogin,
+  requestCodexTask,
   requestResearch,
   requestGitHubOperation,
   requestDataJob,
@@ -67,7 +72,7 @@ import {
   streamChat,
   transcribeVoice,
 } from "./api";
-import type { Agent, Approval, Bootstrap, Conversation, ConversationMessage, GitHubAction, GitHubStatus, Plugin, Project, Skill, Workspace } from "./types";
+import type { Agent, Approval, Bootstrap, CodexStatus, Conversation, ConversationMessage, GitHubAction, GitHubStatus, Plugin, Project, Skill, Workspace } from "./types";
 
 const workspaceIcons: Record<string, ReactNode> = {
   "executive-home": <CircleGauge size={17} />,
@@ -118,6 +123,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [codexLogin, setCodexLogin] = useState<{ verificationUrl: string; userCode: string } | null>(null);
 
   const refresh = async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -172,11 +178,23 @@ export default function App() {
       if (decision === "approved" && item.action === "github_operation") {
         return executeGitHubOperation(item.id);
       }
+      if (decision === "approved" && item.action === "codex_device_login") {
+        const result = await executeCodexDeviceLogin(item.id);
+        setCodexLogin({ verificationUrl: result.verificationUrl, userCode: result.userCode });
+        return result;
+      }
+      if (decision === "approved" && item.action === "codex_task") {
+        return executeCodexTask(item.id);
+      }
       return undefined;
     }, decision === "approved" && item.action === "public_web_research"
       ? "Research completed and report saved"
       : decision === "approved" && item.action === "github_operation"
         ? "Approved GitHub operation completed"
+        : decision === "approved" && item.action === "codex_device_login"
+          ? "Secure Codex sign-in is ready"
+          : decision === "approved" && item.action === "codex_task"
+            ? "Approved Codex task completed"
         : `Approval ${decision}`);
   };
 
@@ -253,7 +271,7 @@ export default function App() {
         <div className="sidebar__footer">
           <div className={`model-indicator ${data.local_model.available ? "online" : "offline"}`}>
             <span />
-            <div><strong>{data.local_model.model}</strong><small>{data.local_model.available ? data.local_model.gpu_accelerated ? "RTX accelerated · local" : "CPU local · slower" : "Local model offline"}</small></div>
+            <div><strong>{data.local_model.routing_enabled ? "Llama · DeepSeek · Qwen" : data.local_model.model}</strong><small>{data.local_model.available ? data.local_model.routing_enabled ? "Auto routing · one local model" : data.local_model.gpu_accelerated ? "RTX accelerated · local" : "CPU local · slower" : "Local model offline"}</small></div>
           </div>
         </div>
       </aside>
@@ -279,6 +297,14 @@ export default function App() {
               project={selectedProject}
               onChat={(message) => mutate(() => chat(selectedProject!.id, message), "Aegis completed the local turn")}
               onGitHub={(payload) => mutate(() => requestGitHubOperation(payload), "GitHub operation sent to Approval Center")}
+              onCodexLogin={() => mutate(() => requestCodexDeviceLogin(), "Codex sign-in sent to Approval Center")}
+              onCodexTask={(message) => mutate(() => requestCodexTask(selectedProject!.id, message), "Codex task sent to Approval Center")}
+              onCodexCheck={async () => {
+                const status = await getCodexStatus();
+                setToast(status.authenticated ? "Codex ChatGPT connection verified" : "Codex is installed but still needs secure sign-in");
+                await refresh(true);
+                return status;
+              }}
             />
           )}
           {activeWorkspace === "ai-workspace" && <AIWorkspace project={selectedProject} conversations={data.conversations} onRefresh={() => refresh(true)} />}
@@ -318,6 +344,35 @@ export default function App() {
             return mutate(() => createSkill(payload as Parameters<typeof createSkill>[0]), "Skill proposal created");
           }}
         />
+      )}
+      {codexLogin && (
+        <div className="codex-login-backdrop" role="dialog" aria-modal="true" aria-label="Secure Codex sign-in">
+          <section className="codex-login-card">
+            <button className="icon-button codex-login-close" onClick={() => setCodexLogin(null)} aria-label="Close sign-in"><X size={17} /></button>
+            <div className="entity-icon agent"><Code2 size={20} /></div>
+            <div className="eyebrow">OPENAI SECURE DEVICE LOGIN</div>
+            <h2>Connect Codex to your ChatGPT account</h2>
+            <p>Open the official sign-in page and enter this one-time code. Aegis never receives or stores your password.</p>
+            <code>{codexLogin.userCode}</code>
+            <a className="primary-button" href={codexLogin.verificationUrl} target="_blank" rel="noreferrer">Open secure sign-in <ArrowUpRight size={14} /></a>
+            <button className="secondary-button" disabled={busy} onClick={() => void (async () => {
+              setBusy(true);
+              try {
+                const status = await getCodexStatus();
+                if (status.authenticated) {
+                  setCodexLogin(null);
+                  setToast("Codex ChatGPT connection verified");
+                  await refresh(true);
+                } else {
+                  setToast("Sign-in is not complete yet");
+                }
+              } catch (reason) {
+                setToast(reason instanceof Error ? reason.message : "Codex connection check failed");
+              } finally { setBusy(false); }
+            })()}>{busy ? "Checking…" : "I signed in — verify connection"}</button>
+            <small>Credentials remain managed by the official Codex CLI. Coding turns still require individual Aegis approval.</small>
+          </section>
+        </div>
       )}
       {toast && <div className="toast"><Check size={16} />{toast}</div>}
     </div>
@@ -424,6 +479,9 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
           setStreamStatus(event.status ?? "Compiling request");
         } else if (event.type === "status") {
           setStreamStatus(event.status ?? "Thinking locally");
+        } else if (event.type === "routing" && event.routing) {
+          setStreamStatus(event.status ?? `${event.routing.label} selected`);
+          setMessages((current) => current.map((item) => item.id === optimisticAssistantId ? { ...item, model: event.routing!.model } : item));
         } else if (event.type === "compilation" && event.compilation) {
           setMessages((current) => current.map((item) => item.id === optimisticAssistantId ? { ...item, compilation: event.compilation } : item));
         } else if (event.type === "token" && event.content) {
@@ -514,11 +572,11 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
   return <div className="ai-workspace ai-workspace--threads">
     <aside className="ai-thread-sidebar"><header><div>{showArchived ? <Archive size={15} /> : <MessageSquareText size={15} />}<strong>{showArchived ? "Archived" : "Conversations"}</strong></div><button title="New encrypted chat" onClick={newChat}><Plus size={15} /></button></header><div className="ai-thread-list">{displayedConversations.length === 0 ? <p>{showArchived ? "No archived conversations." : "No saved conversations yet."}</p> : displayedConversations.map((item) => <button className={`${item.id === selectedConversationId ? "active" : ""} ${item.status === "archived" ? "archived" : ""}`} key={item.id} onClick={() => setSelectedConversationId(item.id)}><strong>{item.title}</strong><span>{item.message_count} messages · {timeAgo(item.updated_at)}</span><small>{item.preview || "Encrypted local conversation"}</small></button>)}</div><footer><div><LockKeyhole size={12} /> SQLCipher encrypted</div><button className={showArchived ? "active" : ""} onClick={() => { const nextMode = !showArchived; const nextItems = nextMode ? archivedConversations : projectConversations; setShowArchived(nextMode); setSelectedConversationId(nextItems[0]?.id ?? null); setMessages([]); }}><Archive size={11} /> {archivedConversations.length}</button></footer></aside>
     <div className="ai-chat-main">
-      <header className="ai-workspace__header"><div><div className="eyebrow"><BrainCircuit size={13} /> AEGIS CONVERSATION</div><h2>{currentConversation?.title ?? project?.name ?? "AI Workspace"}</h2><p>Streaming local reasoning with bounded encrypted history.</p></div><div className="ai-chat-controls"><StatusPill tone="safe">Ollama local · streaming</StatusPill>{currentConversation?.status === "archived" ? <><button className="chat-utility" onClick={() => void restoreCurrent()}><ArchiveRestore size={14} /> Restore</button><button className="chat-utility chat-utility--danger" onClick={() => void deleteCurrent()}><Trash2 size={14} /> Delete</button></> : selectedConversationId ? <button className="chat-utility" disabled={sending} onClick={() => void archiveCurrent()}><Archive size={14} /> Archive</button> : null}<button className="chat-utility" disabled={sending} onClick={newChat}><Plus size={14} /> New chat</button></div></header>
+      <header className="ai-workspace__header"><div><div className="eyebrow"><BrainCircuit size={13} /> AEGIS CONVERSATION</div><h2>{currentConversation?.title ?? project?.name ?? "AI Workspace"}</h2><p>Streaming local reasoning with bounded encrypted history.</p></div><div className="ai-chat-controls"><StatusPill tone="safe">Auto-route · Llama / DeepSeek / Qwen</StatusPill>{currentConversation?.status === "archived" ? <><button className="chat-utility" onClick={() => void restoreCurrent()}><ArchiveRestore size={14} /> Restore</button><button className="chat-utility chat-utility--danger" onClick={() => void deleteCurrent()}><Trash2 size={14} /> Delete</button></> : selectedConversationId ? <button className="chat-utility" disabled={sending} onClick={() => void archiveCurrent()}><Archive size={14} /> Archive</button> : null}<button className="chat-utility" disabled={sending} onClick={newChat}><Plus size={14} /> New chat</button></div></header>
       <section className="ai-conversation">
-        {loadingConversation ? <div className="ai-message ai-message--aegis ai-message--thinking"><div className="ai-avatar ai-avatar--aegis"><BrainCircuit size={14} /></div><div><span>Aegis</span><div className="ai-thinking"><i /><i /><i /> Decrypting local conversation…</div></div></div> : messages.length === 0 ? <div className="ai-welcome"><div className="ai-welcome__mark"><BrainCircuit size={30} /></div><h3>What are we building?</h3><p>Discuss an idea, analyze a market, make a plan, or prepare a coding task. Every turn is rewritten into a bounded execution contract and saved only in the encrypted local database.</p><div className="ai-starters">{["Turn my idea into a practical plan", "Analyze a business opportunity", "Help me design a secure feature"].map((starter) => <button key={starter} onClick={() => setMessage(starter)}>{starter}<ChevronRight size={13} /></button>)}</div></div> : messages.map((item) => <article className="ai-turn" key={item.id}>
-          <div className={`ai-message ${item.role === "user" ? "ai-message--owner" : "ai-message--aegis"}`}><div className={`ai-avatar ${item.role === "user" ? "ai-avatar--owner" : "ai-avatar--aegis"}`}>{item.role === "user" ? "S" : <BrainCircuit size={14} />}</div><div className={item.role === "assistant" ? "ai-response" : ""}><span>{item.role === "user" ? "You" : "Aegis"} · {item.provider ?? "local"} · {new Date(item.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>{item.content ? <p>{item.content}{item.streaming && <i className="stream-cursor" />}</p> : item.streaming ? <div className="ai-thinking"><i /><i /><i /> {streamStatus || "Thinking locally…"}</div> : null}{item.error && <small>{item.error}</small>}{item.role === "assistant" && item.content && <div className="ai-message-actions"><button onClick={() => void copyAnswer(item)} title="Copy response">{copiedId === item.id ? <Check size={13} /> : <Copy size={13} />} {copiedId === item.id ? "Copied" : "Copy"}</button></div>}</div></div>
-          {item.compilation && <details className="prompt-contract ai-contract"><summary><Sparkles size={11} /> View rewritten execution contract · {item.compilation.risk_level} risk</summary><div><label>Objective</label><p>{item.compilation.objective}</p><label>Compiled prompt</label><pre>{item.compilation.compiled_prompt}</pre><footer><span>{item.compilation.compiler_mode}{item.compilation.rewrite_duration_ms ? ` · ${(item.compilation.rewrite_duration_ms / 1000).toFixed(1)}s rewrite` : ""}</span><span>{item.compilation.data_classification}</span></footer></div></details>}
+        {loadingConversation ? <div className="ai-message ai-message--aegis ai-message--thinking"><div className="ai-avatar ai-avatar--aegis"><BrainCircuit size={14} /></div><div><span>Aegis</span><div className="ai-thinking"><i /><i /><i /> Decrypting local conversation…</div></div></div> : messages.length === 0 ? <div className="ai-welcome"><div className="ai-welcome__mark"><BrainCircuit size={30} /></div><h3>What are we building?</h3><p>Discuss an idea, analyze a market, make a plan, or prepare a coding task. Every turn is rewritten into a bounded execution contract, routed to the best local specialist, and saved only in the encrypted local database.</p><div className="model-route-grid"><span>Llama<small>General</small></span><span>DeepSeek<small>Coding</small></span><span>Qwen<small>Research · analysis</small></span></div><div className="ai-starters">{["Turn my idea into a practical plan", "Analyze a business opportunity", "Help me design a secure feature"].map((starter) => <button key={starter} onClick={() => setMessage(starter)}>{starter}<ChevronRight size={13} /></button>)}</div></div> : messages.map((item) => <article className="ai-turn" key={item.id}>
+          <div className={`ai-message ${item.role === "user" ? "ai-message--owner" : "ai-message--aegis"}`}><div className={`ai-avatar ${item.role === "user" ? "ai-avatar--owner" : "ai-avatar--aegis"}`}>{item.role === "user" ? "S" : <BrainCircuit size={14} />}</div><div className={item.role === "assistant" ? "ai-response" : ""}><span>{item.role === "user" ? "You" : "Aegis"} · {item.model ?? item.provider ?? "local"} · {new Date(item.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>{item.content ? <p>{item.content}{item.streaming && <i className="stream-cursor" />}</p> : item.streaming ? <div className="ai-thinking"><i /><i /><i /> {streamStatus || "Thinking locally…"}</div> : null}{item.error && <small>{item.error}</small>}{item.role === "assistant" && item.content && <div className="ai-message-actions"><button onClick={() => void copyAnswer(item)} title="Copy response">{copiedId === item.id ? <Check size={13} /> : <Copy size={13} />} {copiedId === item.id ? "Copied" : "Copy"}</button></div>}</div></div>
+          {item.compilation && <details className="prompt-contract ai-contract"><summary><Sparkles size={11} /> View rewritten execution contract · {item.compilation.risk_level} risk</summary><div><label>Objective</label><p>{item.compilation.objective}</p><label>Compiled prompt</label><pre>{item.compilation.compiled_prompt}</pre><footer><span>{item.compilation.compiler_mode}{item.compilation.rewrite_duration_ms ? ` · ${(item.compilation.rewrite_duration_ms / 1000).toFixed(1)}s rewrite` : ""}</span>{item.compilation.model_routing && <span>{item.compilation.model_routing.label} · {item.compilation.model_routing.resource_fit.replaceAll("_", " ")}</span>}<span>{item.compilation.data_classification}</span></footer></div></details>}
         </article>)}
         {streamStatus && !sending && <div className="ai-stream-status">{streamStatus}</div>}
         <div ref={conversationEnd} />
@@ -528,11 +586,14 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
   </div>;
 }
 
-function ExecutiveHome({ data, project, onChat, onGitHub }: {
+function ExecutiveHome({ data, project, onChat, onGitHub, onCodexLogin, onCodexTask, onCodexCheck }: {
   data: Bootstrap;
   project: Project | null;
   onChat: (message: string) => Promise<void>;
   onGitHub: (payload: Parameters<typeof requestGitHubOperation>[0]) => Promise<void>;
+  onCodexLogin: () => Promise<void>;
+  onCodexTask: (message: string) => Promise<void>;
+  onCodexCheck: () => Promise<CodexStatus>;
 }) {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
@@ -617,6 +678,14 @@ function ExecutiveHome({ data, project, onChat, onGitHub }: {
         connectionStatus={data.plugins.find((item) => item.id === "plugin-github")?.connection_status ?? "not_connected"}
         onRequest={onGitHub}
       />
+      <CodexEngineering
+        project={project}
+        status={data.integrations.codex}
+        connectionStatus={data.plugins.find((item) => item.id === "plugin-codex")?.connection_status ?? "not_connected"}
+        onLogin={onCodexLogin}
+        onTask={onCodexTask}
+        onCheck={onCodexCheck}
+      />
     </div>
   );
 }
@@ -666,6 +735,49 @@ function GitHubMaintenance({ project, status, connectionStatus, onRequest }: {
       {action === "draft_pr" && <><label>Pull request title<input required value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>Pull request body<textarea required rows={5} value={body} onChange={(event) => setBody(event.target.value)} /></label></>}
       <div className="github-operation-policy"><ShieldCheck size={16} /><span>Creates a single-use approval request. No merge, delete, force-push, arbitrary shell, or unregistered repository access is available.</span></div>
       <button className="primary-button" disabled={!project || submitting || status.git?.origin_matches_registered !== true}>{submitting ? "Requesting approval…" : `Request ${operations.find(([value]) => value === action)?.[1]}`}</button>
+    </form>
+  </section>;
+}
+
+function CodexEngineering({ project, status, connectionStatus, onLogin, onTask, onCheck }: {
+  project: Project | null;
+  status: CodexStatus;
+  connectionStatus: string;
+  onLogin: () => Promise<void>;
+  onTask: (message: string) => Promise<void>;
+  onCheck: () => Promise<CodexStatus>;
+}) {
+  const [runtimeStatus, setRuntimeStatus] = useState(status);
+  const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  useEffect(() => setRuntimeStatus(status), [status]);
+  const check = async () => {
+    setSubmitting(true);
+    try { setRuntimeStatus(await onCheck()); } finally { setSubmitting(false); }
+  };
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const request = message.trim();
+    if (!project || !request || submitting) return;
+    setSubmitting(true);
+    try { await onTask(request); setMessage(""); } finally { setSubmitting(false); }
+  };
+  return <section className="panel span-12 github-maintenance codex-engineering">
+    <PanelHeader icon={<Code2 size={17} />} title="Codex internal engineering" action={<StatusPill tone={runtimeStatus.authenticated ? "safe" : "warning"}>{runtimeStatus.authenticated ? "ChatGPT connected" : connectionStatus.replaceAll("_", " ")}</StatusPill>} />
+    <div className="github-status-grid">
+      <article><span>Official CLI</span><strong>{runtimeStatus.installed ? "Installed" : "Unavailable"}</strong></article>
+      <article><span>Protocol</span><strong>{runtimeStatus.protocol || "app-server-stdio"}</strong></article>
+      <article><span>Authentication</span><strong>{runtimeStatus.authenticated ? runtimeStatus.plan_type || "Connected" : "Owner sign-in required"}</strong></article>
+      <article><span>Turn boundary</span><strong>Approval · registered root</strong></article>
+    </div>
+    <div className="codex-connection-actions">
+      <button className="secondary-button" disabled={!runtimeStatus.installed || submitting} onClick={() => void check()}>{submitting ? "Checking…" : "Check connection"}</button>
+      <button className="secondary-button" disabled={!runtimeStatus.installed || runtimeStatus.authenticated || submitting} onClick={() => void onLogin()}>Request secure sign-in</button>
+    </div>
+    <form className="github-operation-form codex-task-form" onSubmit={submit}>
+      <label>Engineering request<textarea required rows={4} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Describe a coding task for this registered project. Aegis rewrites it before approval." /></label>
+      <div className="github-operation-policy"><ShieldCheck size={16} /><span>Every Codex turn uses the rewritten execution contract, a single registered project root, workspace-write sandboxing, no network, and a separate owner approval.</span></div>
+      <button className="primary-button" disabled={!project || !runtimeStatus.authenticated || !message.trim() || submitting}>{submitting ? "Working…" : "Request Codex task"}</button>
     </form>
   </section>;
 }
@@ -768,7 +880,7 @@ function OpportunityEngine({ data, project, onResearch, onCreate }: {
     <div className="source-policy"><ShieldCheck size={16} /><span>Public sources only. Each run requires approval, blocks private/client data, records citations, and produces an encrypted local report.</span></div>
     <div className="opportunity-summary-grid"><div className="allocation-panel"><div className="allocation-ring"><span><strong>80 / 20</strong><small>allocation</small></span></div><div><h3>Existing businesses</h3><div className="allocation-bar"><i style={{ width: "80%" }} /></div><p>80% improves and monetizes what we already own.</p><h3>Exploration</h3><div className="allocation-bar exploration"><i style={{ width: "20%" }} /></div><p>20% tests new AI opportunities with strict stop criteria.</p></div></div><div className="opportunity-metrics"><article><strong>{reports.length}</strong><span>Research reports</span></article><article><strong>{data.opportunities.length}</strong><span>Scored opportunities</span></article><article><strong>{reports.reduce((total, item) => total + item.source_count, 0)}</strong><span>Accepted sources</span></article></div></div>
     <section className="opportunity-section"><PanelHeader icon={<Radar size={17} />} title="Opportunity research reports" action={<StatusPill tone={reports.length ? "safe" : "neutral"}>{reports.length} ready</StatusPill>} />
-      {reports.length === 0 ? <EmptyState icon={<Radar />} title="No research report yet" body="Submit a public topic, approve it in Approval Center, and Aegis will return here with a source-backed executive report." /> : <div className="research-report-list">{reports.map((item) => <article className="research-report" key={item.id}><header><div><div className="eyebrow">PUBLIC RESEARCH · {new Date(item.created_at).toLocaleString()}</div><h3>{item.report.title}</h3></div><div className="report-badges"><StatusPill tone={item.report.quality_gate === "supported_discovery" ? "safe" : "warning"}>{item.report.quality_gate?.replaceAll("_", " ") ?? "legacy quality"}</StatusPill><StatusPill tone={Number(item.report.source_metrics.verified_page_count ?? 0) > 0 ? "safe" : "warning"}>{Number(item.report.source_metrics.verified_page_count ?? 0)} full pages</StatusPill><StatusPill tone={item.independent_domains >= 2 ? "safe" : "warning"}>{item.source_count} sources · {item.independent_domains} domains</StatusPill></div></header><section><h4>Executive Summary</h4><ul>{item.report.executive_summary.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Key findings</h4><div className="report-findings">{item.report.key_findings.map((finding, index) => <article key={`${finding.headline}-${index}`}><div><StatusPill tone={finding.confidence >= .7 ? "safe" : "neutral"}>{Math.round(finding.confidence * 100)}% confidence</StatusPill><span>{finding.source_ids.join(", ")}</span></div><h5>{finding.headline}</h5><p>{finding.evidence}</p><small>{finding.implication}</small></article>)}</div></section><details><summary>Recommendations, questions, caveats, and sources</summary><div className="report-detail-grid"><section><h4>Recommended next steps</h4><ol>{item.report.recommended_next_steps.map((line) => <li key={line}>{line}</li>)}</ol></section><section><h4>Further questions</h4><ul>{item.report.further_questions.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Caveats</h4><ul>{item.report.caveats.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Sources</h4><div className="report-sources">{item.report.sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer"><span>{source.id} · {source.domain} · {source.source_tier} · {source.freshness_state ?? "unknown date"} · {source.page_verification_state?.replaceAll("_", " ") ?? "legacy excerpt"}{source.methodology_terms?.length ? " · methodology signal" : ""}</span>{source.title}<ArrowUpRight size={12} /></a>)}</div></section></div></details></article>)}</div>}
+      {reports.length === 0 ? <EmptyState icon={<Radar />} title="No research report yet" body="Submit a public topic, approve it in Approval Center, and Aegis will return here with a source-backed executive report." /> : <div className="research-report-list">{reports.map((item) => <article className="research-report" key={item.id}><header><div><div className="eyebrow">PUBLIC RESEARCH · {new Date(item.created_at).toLocaleString()}</div><h3>{item.report.title}</h3></div><div className="report-badges"><StatusPill tone={item.report.quality_gate === "supported_discovery" ? "safe" : "warning"}>{item.report.quality_gate?.replaceAll("_", " ") ?? "legacy quality"}</StatusPill><StatusPill tone={Number(item.report.source_metrics.verified_page_count ?? 0) > 0 ? "safe" : "warning"}>{Number(item.report.source_metrics.verified_page_count ?? 0)} full pages</StatusPill><StatusPill tone={Number(item.report.source_metrics.unresolved_claim_count ?? 0) === 0 ? "safe" : "danger"}>{Number(item.report.source_metrics.corroborated_claim_count ?? 0)} corroborated · {Number(item.report.source_metrics.unresolved_claim_count ?? 0)} conflicts</StatusPill><StatusPill tone={item.independent_domains >= 2 ? "safe" : "warning"}>{item.source_count} sources · {item.independent_domains} domains</StatusPill></div></header><section><h4>Executive Summary</h4><ul>{item.report.executive_summary.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Key findings</h4><div className="report-findings">{item.report.key_findings.map((finding, index) => <article key={`${finding.headline}-${index}`}><div><StatusPill tone={finding.confidence >= .7 ? "safe" : "neutral"}>{Math.round(finding.confidence * 100)}% confidence</StatusPill><span>{finding.source_ids.join(", ")}</span></div><h5>{finding.headline}</h5><p>{finding.evidence}</p><small>{finding.implication}</small></article>)}</div></section><details><summary>Recommendations, claim checks, caveats, and sources</summary><div className="report-detail-grid"><section><h4>Recommended next steps</h4><ol>{item.report.recommended_next_steps.map((line) => <li key={line}>{line}</li>)}</ol></section><section><h4>Claim-level checks</h4><ul>{(item.report.claim_assessments ?? []).map((claim) => <li key={claim.id}><strong>{claim.status.replaceAll("_", " ")}</strong> · {claim.claim} · {claim.source_ids.join(", ")}{claim.metric_values.length ? ` · ${claim.metric_values.join(" vs ")}` : ""}</li>)}</ul></section><section><h4>Further questions</h4><ul>{item.report.further_questions.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Caveats</h4><ul>{item.report.caveats.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Sources</h4><div className="report-sources">{item.report.sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer"><span>{source.id} · {source.domain} · {source.source_tier} · {source.freshness_state ?? "unknown date"} · {source.page_verification_state?.replaceAll("_", " ") ?? "legacy excerpt"}{source.methodology_terms?.length ? " · methodology signal" : ""}</span>{source.title}<ArrowUpRight size={12} /></a>)}</div></section></div></details></article>)}</div>}
     </section>
     <section className="opportunity-section"><PanelHeader icon={<CircleGauge size={17} />} title="Evidence-backed scorecard" action={<StatusPill>{data.opportunities.length} scored</StatusPill>} /><details className="manual-score"><summary><Plus size={13} /> Score a researched opportunity manually</summary><OpportunityCreateForm onCreate={onCreate} /></details>{data.opportunities.length === 0 ? <EmptyState icon={<Zap />} title="No unsupported promises" body="Score an opportunity only after the research report is reviewed and customer or pricing evidence is attached." /> : <div className="card-grid">{data.opportunities.map((item, index) => <article className="entity-card" key={index}><StatusPill tone="safe">{String(item.score)} / 100</StatusPill><h3>{String(item.title)}</h3><p>{String(item.thesis)}</p><small>{String(item.allocation)}</small></article>)}</div>}</section>
   </div>;
@@ -791,7 +903,7 @@ function ApprovalCenter({ approvals, onDecision }: { approvals: Approval[]; onDe
       setRunningId(null);
     }
   };
-  return <div className="single-workspace"><div className="workspace-intro compact"><div><div className="eyebrow">HUMAN AUTHORITY</div><h2>Nothing consequential<br /><span>happens in the dark.</span></h2></div><UserRoundCheck className="intro-icon" /></div>{pending.length === 0 ? <EmptyState icon={<Check />} title="Approval queue is clear" body="Aegis will surface evidence, risk, cost, and exact scope before asking." /> : <div className="approval-list">{pending.map((item) => <article key={item.id}><div><StatusPill tone={item.risk_level === "high" || item.risk_level === "critical" ? "danger" : "warning"}>{item.risk_level} risk</StatusPill><span>{timeAgo(item.requested_at)}</span></div><h3>{item.summary}</h3><p>Action: {item.action.replaceAll("_", " ")}</p><pre>{JSON.stringify(item.evidence, null, 2)}</pre><footer><button className="decline-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "declined")}><X size={15} /> Decline</button><button className="approve-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "approved")}>{runningId === item.id ? <Activity size={15} /> : <Check size={15} />} {runningId === item.id && item.action === "public_web_research" ? "Researching…" : runningId === item.id && item.action === "github_operation" ? "Executing…" : item.action === "public_web_research" || item.action === "github_operation" ? "Approve & run" : "Approve"}</button></footer></article>)}</div>}</div>;
+  return <div className="single-workspace"><div className="workspace-intro compact"><div><div className="eyebrow">HUMAN AUTHORITY</div><h2>Nothing consequential<br /><span>happens in the dark.</span></h2></div><UserRoundCheck className="intro-icon" /></div>{pending.length === 0 ? <EmptyState icon={<Check />} title="Approval queue is clear" body="Aegis will surface evidence, risk, cost, and exact scope before asking." /> : <div className="approval-list">{pending.map((item) => <article key={item.id}><div><StatusPill tone={item.risk_level === "high" || item.risk_level === "critical" ? "danger" : "warning"}>{item.risk_level} risk</StatusPill><span>{timeAgo(item.requested_at)}</span></div><h3>{item.summary}</h3><p>Action: {item.action.replaceAll("_", " ")}</p><pre>{JSON.stringify(item.evidence, null, 2)}</pre><footer><button className="decline-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "declined")}><X size={15} /> Decline</button><button className="approve-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "approved")}>{runningId === item.id ? <Activity size={15} /> : <Check size={15} />} {runningId === item.id && item.action === "public_web_research" ? "Researching…" : runningId === item.id && item.action === "codex_device_login" ? "Starting sign-in…" : runningId === item.id ? "Executing…" : ["public_web_research", "github_operation", "codex_device_login", "codex_task"].includes(item.action) ? "Approve & run" : "Approve"}</button></footer></article>)}</div>}</div>;
 }
 
 function SecuritySentinel({ data }: { data: Bootstrap }) {
