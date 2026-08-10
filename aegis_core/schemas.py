@@ -96,13 +96,17 @@ class PluginChange(BaseModel):
 
 class GitHubOperationRequest(BaseModel):
     project_id: str = Field(min_length=2, max_length=100)
-    action: Literal["verify_auth", "create_branch", "stage_files", "commit", "push", "draft_pr"]
+    action: Literal["verify_auth", "inspect_governance", "create_branch", "stage_files", "commit", "push", "draft_pr"]
     branch: str | None = Field(default=None, max_length=120)
     paths: list[str] | None = Field(default=None, min_length=1, max_length=50)
     message: str | None = Field(default=None, max_length=160)
     title: str | None = Field(default=None, max_length=160)
     body: str | None = Field(default=None, max_length=20_000)
     base: str = Field(default="main", max_length=120)
+
+
+class SecurityScanRequest(BaseModel):
+    project_id: str = Field(min_length=2, max_length=100)
 
 
 class CodexTaskRequest(BaseModel):

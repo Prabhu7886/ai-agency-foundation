@@ -41,6 +41,7 @@ from aegis_core.schemas import (
     ProjectCreate,
     PromptCompileRequest,
     ResearchRequest,
+    SecurityScanRequest,
     SkillEvaluationCreate,
     SkillReleaseRequest,
     SkillVersionCreate,
@@ -52,6 +53,7 @@ from aegis_core.schemas import (
     TaskUpdate,
     VoiceSpeakRequest,
 )
+from aegis_core.security_sentinel import SecuritySentinelService
 from aegis_core.store import AegisStore, slugify
 from aegis_core.world_pulse import WorldPulseService
 from aegis_core.voice import LocalVoiceService
@@ -102,6 +104,7 @@ def create_app(
     prompt_compiler = PromptCompiler(model_gateway)
     research = WebResearchService(guard)
     github = GitHubAdapter(guard)
+    security_sentinel = SecuritySentinelService(guard)
     codex = CodexAppServerAdapter(guard)
     world_pulse = WorldPulseService(store)
     opportunity_reports = OpportunityReportService()
@@ -841,6 +844,13 @@ def create_app(
     async def foundation_status() -> dict[str, Any]:
         return {"policy": guard.status(), "local_model": model_router.status()}
 
+    @app.post("/api/security/scans", dependencies=[Depends(require_session)])
+    async def run_security_scan(payload: SecurityScanRequest) -> dict[str, Any]:
+        project = store.get_project(payload.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return await asyncio.to_thread(security_sentinel.scan, project)
+
     @app.get("/api/github/status/{project_id}", dependencies=[Depends(require_session)])
     async def github_status(project_id: str) -> dict[str, Any]:
         project = store.get_project(project_id)
@@ -886,7 +896,12 @@ def create_app(
             raise
         if evidence.get("operation") == "verify_auth" and result.get("authenticated") is True:
             store.set_plugin_status("plugin-github", "enabled", "connected")
-        complete_approved_action(approval_id, f"GitHub {evidence.get('operation', 'operation')} completed")
+        summary = (
+            json.dumps(result.get("governance", {}), separators=(",", ":"))
+            if evidence.get("operation") == "inspect_governance"
+            else f"GitHub {evidence.get('operation', 'operation')} completed"
+        )
+        complete_approved_action(approval_id, summary)
         return result
 
     @app.get("/api/codex/status", dependencies=[Depends(require_session)])

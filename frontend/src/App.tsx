@@ -68,11 +68,12 @@ import {
   requestGitHubOperation,
   requestDataJob,
   restoreConversation,
+  runSecurityScan,
   speakVoice,
   streamChat,
   transcribeVoice,
 } from "./api";
-import type { Agent, Approval, Bootstrap, CodexStatus, Conversation, ConversationMessage, GitHubAction, GitHubStatus, Plugin, Project, Skill, Workspace } from "./types";
+import type { Agent, Approval, Bootstrap, CodexStatus, Conversation, ConversationMessage, GitHubAction, GitHubGovernance, GitHubStatus, Plugin, Project, SecurityScan, Skill, Workspace } from "./types";
 
 const workspaceIcons: Record<string, ReactNode> = {
   "executive-home": <CircleGauge size={17} />,
@@ -327,7 +328,7 @@ export default function App() {
           {activeWorkspace === "approval-center" && (
             <ApprovalCenter approvals={data.approvals} onDecision={decideAndExecute} />
           )}
-          {activeWorkspace === "security-sentinel" && <SecuritySentinel data={data} />}
+          {activeWorkspace === "security-sentinel" && <SecuritySentinel data={data} project={selectedProject} />}
           {activeWorkspace === "voice-lounge" && <VoiceLounge />}
           {activeWorkspace === "data-lab" && <DataLab project={selectedProject} onRequest={(payload) => mutate(() => requestDataJob(payload), "Data cleaning plan sent to Approval Center")} />}
         </section>
@@ -606,6 +607,11 @@ function ExecutiveHome({ data, project, onChat, onGitHub, onCodexLogin, onCodexT
     await onChat(value);
     setSending(false);
   };
+  const governance = useMemo(() => {
+    const completed = data.approvals.find((item) => item.evidence.operation === "inspect_governance" && item.execution?.status === "completed");
+    if (!completed?.execution?.result_summary) return null;
+    try { return JSON.parse(completed.execution.result_summary) as GitHubGovernance; } catch { return null; }
+  }, [data.approvals]);
   return (
     <div className="dashboard-grid">
       <section className="hero-card span-8">
@@ -676,6 +682,7 @@ function ExecutiveHome({ data, project, onChat, onGitHub, onCodexLogin, onCodexT
         project={project}
         status={data.integrations.github}
         connectionStatus={data.plugins.find((item) => item.id === "plugin-github")?.connection_status ?? "not_connected"}
+        governance={governance}
         onRequest={onGitHub}
       />
       <CodexEngineering
@@ -690,10 +697,11 @@ function ExecutiveHome({ data, project, onChat, onGitHub, onCodexLogin, onCodexT
   );
 }
 
-function GitHubMaintenance({ project, status, connectionStatus, onRequest }: {
+function GitHubMaintenance({ project, status, connectionStatus, governance, onRequest }: {
   project: Project | null;
   status: GitHubStatus;
   connectionStatus: string;
+  governance: GitHubGovernance | null;
   onRequest: (payload: Parameters<typeof requestGitHubOperation>[0]) => Promise<void>;
 }) {
   const [action, setAction] = useState<GitHubAction>("verify_auth");
@@ -702,9 +710,10 @@ function GitHubMaintenance({ project, status, connectionStatus, onRequest }: {
   const [message, setMessage] = useState("Update Aegis controlled maintenance");
   const [title, setTitle] = useState("Update Aegis controlled maintenance");
   const [body, setBody] = useState("## Summary\n\nApproval-gated Aegis maintenance update.\n\n## Validation\n\n- Tests required before review");
+  const [base, setBase] = useState("main");
   const [submitting, setSubmitting] = useState(false);
   const operations: Array<[GitHubAction, string]> = [
-    ["verify_auth", "Verify"], ["create_branch", "Branch"], ["stage_files", "Stage"],
+    ["verify_auth", "Verify"], ["inspect_governance", "Governance"], ["create_branch", "Branch"], ["stage_files", "Stage"],
     ["commit", "Commit"], ["push", "Push"], ["draft_pr", "Draft PR"],
   ];
   const submit = async (event: FormEvent) => {
@@ -714,6 +723,7 @@ function GitHubMaintenance({ project, status, connectionStatus, onRequest }: {
     if (["create_branch", "push", "draft_pr"].includes(action)) payload.branch = branch.trim();
     if (action === "stage_files") payload.paths = paths.split(/[\n,]+/).map((item) => item.trim()).filter(Boolean);
     if (action === "commit") payload.message = message.trim();
+    if (action === "inspect_governance") payload.base = base.trim();
     if (action === "draft_pr") Object.assign(payload, { title: title.trim(), body: body.trim(), base: "main" });
     setSubmitting(true);
     try { await onRequest(payload); } finally { setSubmitting(false); }
@@ -730,12 +740,27 @@ function GitHubMaintenance({ project, status, connectionStatus, onRequest }: {
     <div className="github-operation-tabs">{operations.map(([value, label]) => <button key={value} type="button" className={action === value ? "active" : ""} onClick={() => setAction(value)}>{label}</button>)}</div>
     <form className="github-operation-form" onSubmit={submit}>
       {needsBranch && <label>Protected branch<input required pattern="codex/.+" value={branch} onChange={(event) => setBranch(event.target.value)} /></label>}
+      {action === "inspect_governance" && <label>Base branch<input required pattern="[A-Za-z0-9._/-]+" value={base} onChange={(event) => setBase(event.target.value)} /></label>}
       {action === "stage_files" && <label>Project-relative files<textarea required rows={3} value={paths} onChange={(event) => setPaths(event.target.value)} placeholder="aegis_core/api.py&#10;frontend/src/App.tsx" /></label>}
       {action === "commit" && <label>Commit message<input required value={message} onChange={(event) => setMessage(event.target.value)} /></label>}
       {action === "draft_pr" && <><label>Pull request title<input required value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>Pull request body<textarea required rows={5} value={body} onChange={(event) => setBody(event.target.value)} /></label></>}
       <div className="github-operation-policy"><ShieldCheck size={16} /><span>Creates a single-use approval request. No merge, delete, force-push, arbitrary shell, or unregistered repository access is available.</span></div>
       <button className="primary-button" disabled={!project || submitting || status.git?.origin_matches_registered !== true}>{submitting ? "Requesting approval…" : `Request ${operations.find(([value]) => value === action)?.[1]}`}</button>
     </form>
+    {governance && <div className="governance-snapshot">
+      <PanelHeader icon={<ShieldCheck size={16} />} title="Last approved governance snapshot" action={<StatusPill tone={governance.protection.state === "protected" ? "safe" : "warning"}>{governance.protection.state.replaceAll("_", " ")}</StatusPill>} />
+      <div className="github-status-grid">
+        <article><span>Base branch</span><strong>{governance.base_branch}</strong></article>
+        <article><span>Required reviews</span><strong>{governance.protection.required_approving_reviews}</strong></article>
+        <article><span>Required checks</span><strong>{new Set([...governance.protection.required_checks, ...governance.protection.required_check_integrations]).size}</strong></article>
+        <article><span>Admin enforcement</span><strong>{governance.protection.enforce_admins ? "On" : "Off"}</strong></article>
+        <article><span>Current PR</span><strong>{governance.pull_request.found ? `#${governance.pull_request.number}${governance.pull_request.is_draft ? " · draft" : ""}` : "Not found"}</strong></article>
+        <article><span>PR checks</span><strong>{governance.pull_request.found ? `${governance.pull_request.checks_total ?? 0} total · ${governance.pull_request.checks_failing ?? 0} failing` : "Unavailable"}</strong></article>
+        <article><span>Review decision</span><strong>{governance.pull_request.review_decision ?? "None"}</strong></article>
+        <article><span>Merge state</span><strong>{governance.pull_request.merge_state ?? "Unknown"}</strong></article>
+      </div>
+      {governance.pull_request.checks?.length ? <div className="governance-checks">{governance.pull_request.checks.map((check) => <span key={`${check.name}-${check.state}`}><i className={check.state === "SUCCESS" ? "passed" : ""} />{check.name} · {check.state}</span>)}</div> : null}
+    </div>}
   </section>;
 }
 
@@ -906,7 +931,10 @@ function ApprovalCenter({ approvals, onDecision }: { approvals: Approval[]; onDe
   return <div className="single-workspace"><div className="workspace-intro compact"><div><div className="eyebrow">HUMAN AUTHORITY</div><h2>Nothing consequential<br /><span>happens in the dark.</span></h2></div><UserRoundCheck className="intro-icon" /></div>{pending.length === 0 ? <EmptyState icon={<Check />} title="Approval queue is clear" body="Aegis will surface evidence, risk, cost, and exact scope before asking." /> : <div className="approval-list">{pending.map((item) => <article key={item.id}><div><StatusPill tone={item.risk_level === "high" || item.risk_level === "critical" ? "danger" : "warning"}>{item.risk_level} risk</StatusPill><span>{timeAgo(item.requested_at)}</span></div><h3>{item.summary}</h3><p>Action: {item.action.replaceAll("_", " ")}</p><pre>{JSON.stringify(item.evidence, null, 2)}</pre><footer><button className="decline-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "declined")}><X size={15} /> Decline</button><button className="approve-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "approved")}>{runningId === item.id ? <Activity size={15} /> : <Check size={15} />} {runningId === item.id && item.action === "public_web_research" ? "Researching…" : runningId === item.id && item.action === "codex_device_login" ? "Starting sign-in…" : runningId === item.id ? "Executing…" : ["public_web_research", "github_operation", "codex_device_login", "codex_task"].includes(item.action) ? "Approve & run" : "Approve"}</button></footer></article>)}</div>}</div>;
 }
 
-function SecuritySentinel({ data }: { data: Bootstrap }) {
+function SecuritySentinel({ data, project }: { data: Bootstrap; project: Project | null }) {
+  const [scan, setScan] = useState<SecurityScan | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
   const controls = [
     ["Local API", data.foundation.local_only, String(data.foundation.api_bind)],
     ["SQLCipher", data.foundation.sqlcipher_required, "required"],
@@ -916,7 +944,33 @@ function SecuritySentinel({ data }: { data: Bootstrap }) {
     ["External research", data.foundation.external_research === "approved_public_sessions", String(data.foundation.external_research)],
     ["GitHub maintenance", data.foundation.github_maintenance === "single_use_approval", String(data.foundation.github_maintenance)],
   ];
-  return <div className="single-workspace"><div className="workspace-intro security-intro"><div><div className="eyebrow">CONTINUOUS ASSURANCE</div><h2>Trust evidence.<br /><span>Verify everything.</span></h2><p>The foundation remains authoritative for encryption, local inference, data handling, approvals, and network boundaries.</p></div><ShieldCheck className="intro-icon" /></div><div className="security-grid">{controls.map(([name, passed, detail]) => <article key={String(name)} className={passed ? "passed" : "guarded"}><span>{passed ? <Check /> : <LockKeyhole />}</span><div><h3>{String(name)}</h3><p>{String(detail)}</p></div></article>)}</div><div className="panel policy-panel"><PanelHeader icon={<FileCode2 size={17} />} title="Inherited foundation" action={<StatusPill tone="safe">Enforced</StatusPill>} /><p>Every Aegis workspace, agent, skill, and plugin passes through the same SQLCipher, loopback, offline-mode, secret-redaction, and approval controls.</p></div></div>;
+  const executeScan = async () => {
+    if (!project || scanning) return;
+    setScanning(true);
+    setScanError(null);
+    try {
+      setScan(await runSecurityScan(project.id));
+    } catch (reason) {
+      setScanError(reason instanceof Error ? reason.message : "Local scan failed");
+    } finally {
+      setScanning(false);
+    }
+  };
+  return <div className="single-workspace">
+    <div className="workspace-intro security-intro"><div><div className="eyebrow">CONTINUOUS ASSURANCE</div><h2>Trust evidence.<br /><span>Verify everything.</span></h2><p>The foundation remains authoritative for encryption, local inference, data handling, approvals, and network boundaries.</p></div><ShieldCheck className="intro-icon" /></div>
+    <div className="security-grid">{controls.map(([name, passed, detail]) => <article key={String(name)} className={passed ? "passed" : "guarded"}><span>{passed ? <Check /> : <LockKeyhole />}</span><div><h3>{String(name)}</h3><p>{String(detail)}</p></div></article>)}</div>
+    <div className="panel policy-panel"><PanelHeader icon={<FileCode2 size={17} />} title="Inherited foundation" action={<StatusPill tone="safe">Enforced</StatusPill>} /><p>Every Aegis workspace, agent, skill, and plugin passes through the same SQLCipher, loopback, offline-mode, secret-redaction, and approval controls.</p></div>
+    <section className="panel sentinel-scan">
+      <PanelHeader icon={<Search size={17} />} title="Registered-project local scan" action={<button className="secondary-button" disabled={!project || scanning} onClick={() => void executeScan()}>{scanning ? "Scanning…" : "Run read-only scan"}</button>} />
+      <p>Scans tracked text files for secret-shaped values and risky code patterns. It does not execute project code or contact an external vulnerability service.</p>
+      {scanError && <div className="scan-error">{scanError}</div>}
+      {scan && <>
+        <div className="github-status-grid"><article><span>Status</span><strong>{scan.status}</strong></article><article><span>Files scanned</span><strong>{scan.files_scanned}</strong></article><article><span>Critical / high</span><strong>{scan.counts.critical} / {scan.counts.high}</strong></article><article><span>Medium</span><strong>{scan.counts.medium}</strong></article></div>
+        {scan.findings.length ? <div className="security-findings">{scan.findings.map((finding, index) => <article key={`${finding.file}-${finding.line}-${finding.rule}-${index}`}><StatusPill tone={finding.severity === "critical" || finding.severity === "high" ? "danger" : "warning"}>{finding.severity}</StatusPill><div><strong>{finding.rule} · {finding.file}{finding.line ? `:${finding.line}` : ""}</strong><p>{finding.message}</p></div></article>)}</div> : <EmptyState icon={<Check />} title="No configured patterns matched" body="This is supporting evidence, not proof that the project has no vulnerabilities." />}
+        <details className="scan-limitations"><summary>Dependency posture and limitations</summary><pre>{JSON.stringify({ dependency_posture: scan.dependency_posture, limitations: scan.limitations }, null, 2)}</pre></details>
+      </>}
+    </section>
+  </div>;
 }
 
 function VoiceLounge() {

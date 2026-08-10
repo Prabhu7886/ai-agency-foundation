@@ -256,6 +256,11 @@ body::before {
 .github-operation-policy { display: flex; align-items: center; gap: 8px; color: #6f7e92; font-size: 9px; line-height: 1.5; }
 .github-operation-policy svg { flex: 0 0 auto; color: var(--green); }
 .github-operation-form .primary-button { min-width: 150px; }
+.governance-snapshot { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+.governance-checks { display: flex; flex-wrap: wrap; gap: 8px; }
+.governance-checks span { display: flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 6px 9px; color: #8391a5; font-size: 9px; }
+.governance-checks i { width: 6px; height: 6px; border-radius: 50%; background: var(--gold); }
+.governance-checks i.passed { background: var(--green); }
 .codex-connection-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .codex-task-form { grid-template-columns: minmax(0,1fr) auto; }
 .codex-task-form label { grid-column: 1 / -1; }
@@ -372,6 +377,16 @@ body::before {
 .security-grid article.guarded > span { background: var(--gold-soft); color: var(--gold); }
 .security-grid h3 { font: 600 11px "Bahnschrift", "Segoe UI", sans-serif; margin: 0; }
 .security-grid p { color: #637187; font-size: 9px; margin: 3px 0 0; }
+.sentinel-scan { display: grid; gap: 13px; }
+.sentinel-scan > p { margin: 0; color: #718096; font-size: 10px; line-height: 1.6; }
+.sentinel-scan .panel-header { margin-bottom: 0; }
+.security-findings { display: grid; gap: 8px; max-height: 430px; overflow: auto; }
+.security-findings article { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; border: 1px solid var(--line); border-radius: 11px; padding: 11px; background: rgba(255,255,255,.015); }
+.security-findings strong { display: block; color: #b7c4d5; font: 600 10px "Bahnschrift", "Segoe UI", sans-serif; overflow-wrap: anywhere; }
+.security-findings p { margin: 4px 0 0; color: #66758a; font-size: 9px; }
+.scan-error { border: 1px solid rgba(251,113,133,.28); border-radius: 9px; padding: 10px; color: #fb7185; font-size: 10px; }
+.scan-limitations summary { cursor: pointer; color: #7c8ca1; font-size: 10px; }
+.scan-limitations pre { white-space: pre-wrap; color: #69788e; font-size: 9px; }
 .policy-panel { margin-top: 14px; }
 .policy-panel > p { color: var(--muted); font-size: 10px; line-height: 1.7; }
 

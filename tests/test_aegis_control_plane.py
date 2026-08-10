@@ -17,6 +17,7 @@ from aegis_core.opportunity_reports import OpportunityReportService
 from aegis_core.prompt_compiler import PromptCompiler
 from aegis_core.research import WebResearchService
 from aegis_core.schemas import ChatRequest
+from aegis_core.security_sentinel import SecuritySentinelService
 from aegis_core.store import AegisStore
 from aegis_core.world_pulse import WorldPulseService
 from databases.setup_databases import DatabaseSetup
@@ -413,6 +414,34 @@ def test_github_controlled_maintenance_stages_only_explicit_registered_paths(
     with pytest.raises(FoundationViolation, match="escapes"):
         adapter.execute(project, "stage_files", {"paths": ["../outside.txt"]})
     adapter._assert_online(approved_network=True)
+
+
+def test_security_sentinel_scans_only_tracked_text_without_network(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "security.yaml").write_text(yaml.safe_dump({"version": 1}), encoding="utf-8")
+    (config / "models.yaml").write_text(yaml.safe_dump({"defaults": {"offline_mode": True}}), encoding="utf-8")
+    monkeypatch.setenv("AI_AGENCY_HOME", str(tmp_path))
+    repository = tmp_path / "projects" / "repo"
+    repository.mkdir(parents=True)
+    GitHubAdapter._run(["git", "-C", str(repository), "init"], timeout=15)
+    (repository / "safe.py").write_text("subprocess.run(command, shell=True)\n", encoding="utf-8")
+    (repository / ".env").write_text("EXAMPLE_ONLY=true\n", encoding="utf-8")
+    (repository / "untracked.py").write_text("eval('ignored')\n", encoding="utf-8")
+    GitHubAdapter._run(["git", "-C", str(repository), "add", "--", "safe.py", ".env"], timeout=15)
+
+    result = SecuritySentinelService(FoundationGuard()).scan(
+        {"id": "project-test", "name": "Test", "root_path": str(repository)}
+    )
+
+    assert result["network_used"] is False
+    assert result["file_source"] == "git_tracked"
+    assert result["files_scanned"] == 1
+    assert {item["rule"] for item in result["findings"]} == {"shell-execution", "tracked-env"}
+    assert all(item["file"] != "untracked.py" for item in result["findings"])
 
 
 def test_world_pulse_preserves_source_quality_and_rejects_local_urls(store: AegisStore) -> None:

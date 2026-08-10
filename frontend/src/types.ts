@@ -170,7 +170,51 @@ export type GitHubStatus = {
     origin_matches_registered: boolean;
   };
 };
-export type GitHubAction = "verify_auth" | "create_branch" | "stage_files" | "commit" | "push" | "draft_pr";
+export type GitHubAction = "verify_auth" | "inspect_governance" | "create_branch" | "stage_files" | "commit" | "push" | "draft_pr";
+export type GitHubGovernance = {
+  repository: string;
+  base_branch: string;
+  current_branch: string;
+  protection: {
+    state: string;
+    required_checks: string[];
+    required_check_integrations: string[];
+    strict_checks?: boolean;
+    required_approving_reviews: number;
+    dismiss_stale_reviews?: boolean;
+    enforce_admins?: boolean;
+    restrictions_enabled?: boolean;
+  };
+  pull_request: {
+    found: boolean;
+    number?: number;
+    url?: string;
+    is_draft?: boolean;
+    review_decision?: string;
+    merge_state?: string;
+    checks?: Array<{ name: string; state: string }>;
+    checks_total?: number;
+    checks_failing?: number;
+    checks_pending?: number;
+    reason?: string;
+  };
+};
+export type SecurityScan = {
+  project_id: string;
+  project_name: string;
+  mode: "local_static_read_only";
+  network_used: false;
+  file_source: string;
+  files_considered: number;
+  files_scanned: number;
+  files_skipped: number;
+  finding_limit_reached: boolean;
+  status: "passed" | "attention" | "critical";
+  counts: Record<"critical" | "high" | "medium" | "low", number>;
+  findings: Array<{ severity: string; rule: string; file: string; line?: number | null; message: string }>;
+  dependency_posture: Record<string, string | number | null>;
+  limitations: string[];
+};
 export type CodexStatus = {
   installed: boolean;
   connected: boolean;

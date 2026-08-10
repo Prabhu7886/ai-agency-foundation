@@ -1,4 +1,4 @@
-import type { Approval, Bootstrap, CodexStatus, Conversation, ConversationMessage, GitHubAction, GitHubStatus, ModelRouting, Project, PromptCompilation, Task } from "./types";
+import type { Approval, Bootstrap, CodexStatus, Conversation, ConversationMessage, GitHubAction, GitHubStatus, ModelRouting, Project, PromptCompilation, SecurityScan, Task } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -178,6 +178,10 @@ export function requestGitHubOperation(payload: {
 
 export function executeGitHubOperation(approvalId: string): Promise<Record<string, unknown>> {
   return request(`/api/github/requests/${approvalId}/execute`, { method: "POST" });
+}
+
+export function runSecurityScan(projectId: string): Promise<SecurityScan> {
+  return request("/api/security/scans", { method: "POST", body: JSON.stringify({ project_id: projectId }) });
 }
 
 export function getCodexStatus(): Promise<CodexStatus> {

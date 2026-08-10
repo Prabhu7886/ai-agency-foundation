@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -9,6 +10,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlparse
 
 from aegis_core.foundation import FoundationGuard, FoundationViolation
 
@@ -17,7 +19,7 @@ class GitHubAdapter:
     """Expose a small, auditable Git/GitHub operation set without a shell."""
 
     BRANCH_PATTERN = re.compile(r"^codex/[a-z0-9][a-z0-9._/-]{0,119}$")
-    ACTIONS = {"verify_auth", "create_branch", "stage_files", "commit", "push", "draft_pr"}
+    ACTIONS = {"verify_auth", "inspect_governance", "create_branch", "stage_files", "commit", "push", "draft_pr"}
 
     def __init__(self, guard: FoundationGuard, executable: str | None = None) -> None:
         self.guard = guard
@@ -76,6 +78,12 @@ class GitHubAdapter:
                 raise FoundationViolation("GitHub CLI is not installed or registered")
             result = self._run([self.executable, "auth", "status"], timeout=30)
             result["authenticated"] = True
+        elif action == "inspect_governance":
+            self._assert_online(approved_network)
+            if not self.executable:
+                raise FoundationViolation("GitHub CLI is not installed or registered")
+            base = self._validate_read_branch(parameters.get("base") or "main")
+            result = self._inspect_governance(root, repository_url, base)
         elif action == "create_branch":
             branch = self._validate_branch(parameters.get("branch"))
             result = self._run(["git", "-C", str(root), "switch", "-c", branch], timeout=30)
@@ -127,11 +135,107 @@ class GitHubAdapter:
             **result,
         }
 
+    def _inspect_governance(self, root: Path, repository_url: str, base: str) -> dict[str, Any]:
+        """Return a sanitized, read-only snapshot of protection, checks, and PR readiness."""
+        slug = urlparse(repository_url).path.strip("/").removesuffix(".git")
+        protection = self._run(
+            [self.executable or "gh", "api", f"repos/{slug}/branches/{quote(base, safe='')}/protection"],
+            timeout=45,
+            check=False,
+        )
+        if protection["returncode"] == 0:
+            payload = self._json_output(protection["output"], "branch protection")
+            checks = payload.get("required_status_checks") or {}
+            reviews = payload.get("required_pull_request_reviews") or {}
+            protection_state: dict[str, Any] = {
+                "state": "protected",
+                "required_checks": checks.get("contexts", []),
+                "required_check_integrations": [item.get("context") for item in checks.get("checks", []) if item.get("context")],
+                "strict_checks": bool(checks.get("strict")),
+                "required_approving_reviews": int(reviews.get("required_approving_review_count") or 0),
+                "dismiss_stale_reviews": bool(reviews.get("dismiss_stale_reviews")),
+                "enforce_admins": bool((payload.get("enforce_admins") or {}).get("enabled")),
+                "restrictions_enabled": payload.get("restrictions") is not None,
+            }
+        elif "HTTP 404" in protection["output"]:
+            protection_state = {
+                "state": "not_protected_or_not_visible",
+                "required_checks": [],
+                "required_check_integrations": [],
+                "required_approving_reviews": 0,
+            }
+        else:
+            raise RuntimeError(f"GitHub protection inspection failed: {protection['output'][-1000:]}")
+
+        current_branch = self._current_branch(root, check=False)
+        pr_result = self._run(
+            [
+                self.executable or "gh", "pr", "view", current_branch, "--repo", slug,
+                "--json", "number,url,isDraft,reviewDecision,mergeStateStatus,statusCheckRollup",
+            ],
+            cwd=root,
+            timeout=45,
+            check=False,
+        )
+        pull_request: dict[str, Any]
+        if pr_result["returncode"] == 0:
+            pr = self._json_output(pr_result["output"], "pull request status")
+            rollup = pr.get("statusCheckRollup") or []
+            summarized_checks = []
+            for check in rollup[:100]:
+                name = check.get("name") or check.get("context") or "unnamed check"
+                state = check.get("conclusion") or check.get("state") or check.get("status") or "UNKNOWN"
+                summarized_checks.append({"name": str(name)[:160], "state": str(state).upper()[:40]})
+            failing_states = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
+            pending_states = {"PENDING", "QUEUED", "IN_PROGRESS", "EXPECTED", "WAITING", "REQUESTED"}
+            pull_request = {
+                "found": True,
+                "number": pr.get("number"),
+                "url": pr.get("url"),
+                "is_draft": bool(pr.get("isDraft")),
+                "review_decision": pr.get("reviewDecision") or "NONE",
+                "merge_state": pr.get("mergeStateStatus") or "UNKNOWN",
+                "checks": summarized_checks,
+                "checks_total": len(summarized_checks),
+                "checks_failing": sum(item["state"] in failing_states for item in summarized_checks),
+                "checks_pending": sum(item["state"] in pending_states for item in summarized_checks),
+            }
+        else:
+            pull_request = {"found": False, "reason": "No pull request is visible for the current branch."}
+        return {
+            "returncode": 0,
+            "output": "Read-only GitHub governance inspection completed.",
+            "governance": {
+                "repository": slug,
+                "base_branch": base,
+                "protection": protection_state,
+                "current_branch": current_branch,
+                "pull_request": pull_request,
+            },
+        }
+
+    @staticmethod
+    def _json_output(output: str, label: str) -> dict[str, Any]:
+        try:
+            value = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"GitHub returned invalid {label} data") from exc
+        if not isinstance(value, dict):
+            raise RuntimeError(f"GitHub returned invalid {label} data")
+        return value
+
     @classmethod
     def _validate_branch(cls, value: Any) -> str:
         branch = str(value or "")
         if not cls.BRANCH_PATTERN.fullmatch(branch) or ".." in branch or "//" in branch:
             raise FoundationViolation("Aegis branches must use a valid codex/ prefix")
+        return branch
+
+    @staticmethod
+    def _validate_read_branch(value: Any) -> str:
+        branch = str(value or "")
+        if not re.fullmatch(r"[A-Za-z0-9._/-]{1,120}", branch) or ".." in branch or "//" in branch:
+            raise FoundationViolation("Invalid branch for read-only governance inspection")
         return branch
 
     @staticmethod
