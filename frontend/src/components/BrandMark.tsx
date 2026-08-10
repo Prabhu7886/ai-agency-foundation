@@ -2,9 +2,9 @@ export function BrandMark({ compact = false }: { compact?: boolean }) {
   return (
     <div className={`brand-lockup ${compact ? "brand-lockup--compact" : ""}`} aria-label="Aegis">
       <svg className="brand-mark" viewBox="0 0 64 64" role="img" aria-hidden="true">
-        <path d="M32 4 55 14v16c0 14-8.7 24.6-23 30C17.7 54.6 9 44 9 30V14L32 4Z" fill="none" stroke="currentColor" strokeWidth="3.5" />
-        <path d="m18 44 14-30 14 30-7.4-5.2L32 25l-6.6 13.8L18 44Z" fill="currentColor" />
-        <circle cx="32" cy="37" r="5.5" fill="#080d16" stroke="#f6c453" strokeWidth="2.5" />
+        <path d="M9 51 23.5 18.5c1.3-3 3.6-4.5 7-4.5H53" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M23.5 35H33l8 16h13V38H45" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M54 12h4" fill="none" stroke="#f6c453" strokeWidth="4" strokeLinecap="round" />
       </svg>
       {!compact && (
         <span>

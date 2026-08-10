@@ -31,13 +31,13 @@ No BS. Find the path. Make it happen. Prove the result.
 | Aurora Violet | `#8B5CF6` | creativity and agent expansion |
 | Sentinel Green | `#2DD4A7` | verified safety and healthy systems |
 
-## Logo directions
+## Selected logo system
 
-1. **Aegis Lens** — an `A`-shaped protective structure surrounding a verification lens. Best fit for the first product build because it communicates Aegis, intelligence, and protection at favicon size.
-2. **Forward Prism** — three strategic lanes meeting under a north-star signal. Strong for opportunity, movement, and business building.
-3. **Agent Crest** — a central executive node coordinating a modular ring of agents and skills. Strong for the Agent Fleet identity.
+The primary mark is the **A/G Signature Monogram**: one open cyan stroke suggests an `A`, while a second open stroke resolves into a `G`. Its open geometry represents collaboration, movement, and owner-controlled intelligence without using an eye, shield, pyramid, gem, or militaristic crest. A small offset gold dash represents owner authority.
 
-The code-native MVP mark uses the Aegis Lens direction. The generated concept board is exploratory and should not be treated as a final trademark-ready asset until similarity and trademark checks are completed.
+The official backup mark is **Conversation Pulse**. Rounded conversational brackets surround a live data waveform, representing Aegis voice, natural collaboration, and responsive intelligence. It is stored as `frontend/public/aegis-mark-conversation.svg` but is not the active dashboard or favicon mark.
+
+Both production marks must remain recognizable at favicon size. Generated concept boards are exploratory and should not be treated as trademark-ready assets until similarity and trademark checks are completed.
 
 ## Voice
 
