@@ -198,6 +198,69 @@ def test_chat_history_is_bounded_for_local_conversation_context() -> None:
         )
 
 
+def test_encrypted_conversation_persists_bounded_history(store: AegisStore, tmp_path: Path) -> None:
+    project = store.create_project("Conversation Lab", "Private chat", tmp_path / "projects" / "chat", None)
+    conversation = store.create_conversation(project["id"])
+    owner_text = "Design a private local agent workflow"
+    store.add_conversation_message(conversation["id"], "user", owner_text, provider="owner")
+    store.add_conversation_message(
+        conversation["id"],
+        "assistant",
+        "Start with a bounded execution contract.",
+        provider="ollama-local",
+        model="test-local",
+        token_count=8,
+        compilation={"objective": "Design the workflow", "risk_level": "low"},
+    )
+
+    loaded = store.get_conversation(conversation["id"])
+    assert loaded and loaded["encrypted_at_rest"] is True
+    assert loaded["title"] == owner_text
+    assert [item["role"] for item in loaded["messages"]] == ["user", "assistant"]
+    assert loaded["messages"][1]["compilation"]["objective"] == "Design the workflow"
+    assert store.conversation_context(conversation["id"], limit=1) == [
+        {"role": "assistant", "content": "Start with a bounded execution contract."}
+    ]
+    assert owner_text.encode("utf-8") not in store.database.database_path.read_bytes()
+
+    archived = store.archive_conversation(conversation["id"])
+    assert archived["status"] == "archived"
+    with pytest.raises(ValueError, match="read-only"):
+        store.add_conversation_message(conversation["id"], "user", "Continue")
+    assert store.restore_conversation(conversation["id"])["status"] == "active"
+    store.archive_conversation(conversation["id"])
+    store.delete_conversation(conversation["id"])
+    assert store.get_conversation(conversation["id"]) is None
+
+
+def test_model_gateway_streams_local_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_lines(self) -> list[bytes]:
+            return [
+                b'{"response":"Hello"}',
+                b'{"response":" locally","done":true,"eval_count":2,"prompt_eval_count":5}',
+            ]
+
+    def fake_post(url: str, **kwargs: object) -> FakeResponse:
+        assert url == "http://127.0.0.1:11434/api/generate"
+        assert kwargs["json"]["stream"] is True  # type: ignore[index]
+        return FakeResponse()
+
+    monkeypatch.setattr("aegis_core.model_gateway.requests.post", fake_post)
+    events = list(LocalModelGateway(model="test-local").stream_chat("Say hello", {"project": "test"}))
+    assert "".join(item.get("content", "") for item in events) == "Hello locally"
+    assert events[-1] == {"type": "done", "tokens": 2, "prompt_tokens": 5}
+
+
 def test_engineering_adapters_enforce_bounded_identifiers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     config = tmp_path / "config"
     config.mkdir(exist_ok=True)
@@ -248,13 +311,20 @@ def test_approved_public_research_is_narrowly_allowed_offline(
     monkeypatch.setenv("AI_AGENCY_OFFLINE_MODE", "true")
 
     class FakeSearch:
+        def __init__(self) -> None:
+            self.calls = 0
+
         def __enter__(self) -> "FakeSearch":
             return self
 
         def __exit__(self, *_args: object) -> None:
             return None
 
-        def text(self, _query: str, max_results: int) -> list[dict[str, str]]:
+        def text(self, query: str, max_results: int) -> list[dict[str, str]]:
+            self.calls += 1
+            if "site:.gov" in query:
+                assert max_results == 2
+                return [{"title": "Official market signal", "href": "https://example.gov/report", "body": "Official evidence"}]
             assert max_results == 4
             return [{"title": "Public market signal", "href": "https://example.com/report", "body": "Public evidence"}]
 
@@ -263,8 +333,9 @@ def test_approved_public_research_is_narrowly_allowed_offline(
     with pytest.raises(FoundationViolation, match="no approved public-research session"):
         service.search("AI services for small businesses", "quick")
     result = service.search("AI services for small businesses", "quick", approved_session=True)
-    assert result["source_count"] == 1
+    assert result["source_count"] == 2
     assert result["classification"] == "public-only"
+    assert result["research_lanes"]["primary"]["accepted"] == 1
 
 
 def test_public_research_fails_closed_when_provider_has_no_sources(
@@ -336,6 +407,8 @@ def test_opportunity_report_is_source_backed_and_encrypted_in_store(store: Aegis
     assert saved["independent_domains"] == 2
     assert saved["report"]["decision_state"] == "research_complete_validation_required"
     assert saved["report"]["sources"][0]["id"] == "S1"
+    assert saved["report"]["quality_gate"] == "mixed_quality_discovery"
+    assert saved["report"]["source_metrics"]["high_trust_source_count"] == 2
     with pytest.raises(ValueError, match="accepted public source"):
         OpportunityReportService().build("Unsupported idea", {"source_count": 4}, [])
 

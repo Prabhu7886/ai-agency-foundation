@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 
@@ -26,6 +27,7 @@ class OpportunityReportService:
                 "verification_state": str(item.get("verification_state", "single_source")),
                 "confidence": round(float(item.get("confidence", 0.0)), 2),
                 "published_at": item.get("published_at"),
+                "freshness_state": self._freshness_state(item.get("published_at")),
                 "retrieved_at": item.get("retrieved_at") or item.get("collected_at"),
             }
             for index, item in enumerate(signals[:15], start=1)
@@ -34,13 +36,27 @@ class OpportunityReportService:
         independent_domains = len({source["domain"] for source in source_rows if source["domain"] != "unknown"})
         cross_referenced = independent_domains >= 2
         evidence_state = "cross-referenced public evidence" if cross_referenced else "early single-lane public evidence"
+        freshness_counts = Counter(str(source["freshness_state"]) for source in source_rows)
+        dated_source_count = source_count - freshness_counts.get("unknown", 0)
+        high_trust_source_count = tier_counts.get("primary", 0) + tier_counts.get("established", 0)
+        if tier_counts.get("primary", 0) >= 2 and verification_counts.get("corroborated", 0) >= 1:
+            quality_gate = "supported_discovery"
+        elif high_trust_source_count:
+            quality_gate = "mixed_quality_discovery"
+        else:
+            quality_gate = "discovery_only"
+        primary_lane = research.get("research_lanes", {}).get("primary", {})
         findings = [
             {
                 "headline": source["title"],
                 "evidence": source["summary"],
                 "source_ids": [source["id"]],
                 "confidence": source["confidence"],
-                "implication": "Validate whether this public signal maps to a painful, payable customer problem before investing.",
+                "implication": (
+                    "Review the linked primary source and its methodology before treating the excerpt as decision-grade."
+                    if source["source_tier"] == "primary"
+                    else "Validate whether this public signal maps to a painful, payable customer problem before investing."
+                ),
             }
             for source in source_rows[:6]
         ]
@@ -50,9 +66,11 @@ class OpportunityReportService:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "classification": "public-only",
             "decision_state": "research_complete_validation_required",
+            "quality_gate": quality_gate,
             "executive_summary": [
                 f"Research accepted {source_count} public discovery sources across {independent_domains} independent domains.",
                 f"The current evidence is {evidence_state}; {tier_counts.get('primary', 0)} primary and {tier_counts.get('established', 0)} established sources were accepted.",
+                f"Publication-date coverage is {dated_source_count}/{source_count}; {freshness_counts.get('current', 0)} current, {freshness_counts.get('recent', 0)} recent, {freshness_counts.get('stale', 0)} stale, {freshness_counts.get('future_dated', 0)} future-dated, and {freshness_counts.get('unknown', 0)} unknown-date sources.",
                 f"Verification mix: {verification_counts.get('primary_source', 0)} primary-source, {verification_counts.get('corroborated', 0)} corroborated, and {verification_counts.get('single_source', 0)} single-source signals.",
                 "Revenue, willingness to pay, market size, and execution cost remain unverified and must not be treated as facts.",
             ],
@@ -71,7 +89,8 @@ class OpportunityReportService:
             ],
             "caveats": [
                 "Search-result summaries are discovery evidence, not independently audited claims.",
-                "Freshness depends on publisher metadata and the research timestamp.",
+                "The official-source search lane is a discovery aid; the accepted domain tier, publication date, and linked methodology determine trust.",
+                "Missing or unparsable publication dates are labeled unknown rather than assumed current.",
                 "Source diversity does not prove customer demand or commercial viability.",
             ],
             "source_metrics": {
@@ -79,8 +98,44 @@ class OpportunityReportService:
                 "source_count": source_count,
                 "independent_domains": independent_domains,
                 "cross_referenced": cross_referenced,
+                "quality_gate": quality_gate,
+                "high_trust_source_count": high_trust_source_count,
+                "dated_source_count": dated_source_count,
+                "primary_lane_candidates": int(primary_lane.get("accepted", 0)),
                 "source_tiers": dict(tier_counts),
                 "verification_states": dict(verification_counts),
+                "freshness_states": dict(freshness_counts),
             },
             "sources": source_rows,
         }
+
+    @staticmethod
+    def _freshness_state(value: Any) -> str:
+        if not value:
+            return "unknown"
+        text = str(value).strip()
+        parsed: datetime | None = None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                parsed = parsedate_to_datetime(text)
+            except (TypeError, ValueError, OverflowError):
+                for pattern in ("%B %d, %Y", "%b %d, %Y", "%Y-%m-%d"):
+                    try:
+                        parsed = datetime.strptime(text, pattern).replace(tzinfo=timezone.utc)
+                        break
+                    except ValueError:
+                        continue
+        if not parsed:
+            return "unknown"
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).days
+        if age_days < -2:
+            return "future_dated"
+        if age_days <= 120:
+            return "current"
+        if age_days <= 365:
+            return "recent"
+        return "stale"

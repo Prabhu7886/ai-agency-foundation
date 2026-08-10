@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import secrets
 from contextlib import asynccontextmanager
@@ -12,8 +13,9 @@ from typing import Any, AsyncIterator
 from dotenv import load_dotenv
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import iterate_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from aegis_core.foundation import FoundationGuard, FoundationViolation
@@ -29,6 +31,7 @@ from aegis_core.schemas import (
     ApprovalDecision,
     ChatRequest,
     CodexTaskRequest,
+    ConversationCreate,
     DataJobRequest,
     GitHubOperationRequest,
     PluginChange,
@@ -113,7 +116,7 @@ def create_app(
 
     app = FastAPI(
         title="Aegis Local Executive API",
-        version="0.3.0",
+        version="0.4.0",
         description="Local-first executive control plane built on the AI Agency security foundation.",
         lifespan=lifespan,
         docs_url="/api/docs" if os.getenv("AEGIS_ENABLE_API_DOCS", "false").lower() == "true" else None,
@@ -127,7 +130,7 @@ def create_app(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:4173", "http://localhost:4173"],
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PATCH"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "X-Aegis-Session"],
     )
 
@@ -154,13 +157,83 @@ def create_app(
     def fail_approved_action(approval_id: str, exc: Exception) -> None:
         store.finish_approval_execution(approval_id, "failed", str(exc))
 
+    async def runtime_snapshot(project: dict[str, Any]) -> dict[str, Any]:
+        ollama_status, github_status, codex_status = await asyncio.gather(
+            asyncio.to_thread(model_gateway.health),
+            asyncio.to_thread(github.status, project),
+            asyncio.to_thread(codex.status, True),
+        )
+        return {
+            "version": "0.4.0",
+            "workspaces": [item["label"] for item in WORKSPACES],
+            "overview": store.overview(),
+            "agents": [
+                {"name": item["name"], "role": item["role"], "status": item["status"]}
+                for item in store.list_agents()
+            ],
+            "skills": [
+                {"name": item["name"], "version": item["version"], "status": item["status"]}
+                for item in store.list_skills()
+            ],
+            "controls": {
+                "prompt_compilation_required": True,
+                "approval_execution_single_use": True,
+                "task_state_machine": True,
+                "sqlcipher_required": True,
+                "conversation_history_encrypted": True,
+                "conversation_context_message_limit": 12,
+                "loopback_only": True,
+                "cloud_private_data": "blocked",
+            },
+            "implemented_capabilities": [
+                "Local Ollama chat with token streaming and automatic bounded prompt compilation",
+                "Encrypted SQLCipher conversation threads that persist across restarts",
+                "Single-use approval execution ledger with expiry",
+                "One-way task lifecycle enforcement",
+                "Approval-gated Codex and GitHub engineering adapters",
+                "Encrypted SQLCipher control-plane persistence",
+                "Audited project, agent, skill, and workspace inventory",
+            ],
+            "integrations": {
+                "ollama": {
+                    "state": "connected" if ollama_status.get("available") else "unavailable",
+                    "model": ollama_status.get("model"),
+                    "loopback": True,
+                },
+                "github": {
+                    "state": (
+                        "connected"
+                        if github_status.get("authenticated") is True
+                        else "not_authenticated"
+                        if github_status.get("authenticated") is False
+                        else "remote_auth_not_verified_offline"
+                    ),
+                    "cli_installed": github_status.get("installed", False),
+                    "repository_registered": bool(project.get("repository_url")),
+                    "remote_verification": github_status.get("remote_verification"),
+                },
+                "codex": {
+                    "state": "connected" if codex_status.get("connected") else "not_connected",
+                    "installed": codex_status.get("installed", False),
+                    "chatgpt_account_present": bool(codex_status.get("account")),
+                    "protocol": codex_status.get("protocol"),
+                },
+            },
+            "answering_rules": [
+                "Treat only implemented_capabilities as implemented capabilities.",
+                "Treat skill status proposal or testing as not yet implemented.",
+                "Report integration states exactly as supplied; do not infer a different state.",
+                "Never expose account identifiers, executable paths, or secrets.",
+            ],
+        }
+
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
         return {
             "status": "ok",
             "local_only": True,
             "service": "aegis",
-            "version": "0.3.0",
+            "version": "0.4.0",
             "database": "sqlcipher-required",
             "prompt_compiler": "required",
         }
@@ -189,6 +262,7 @@ def create_app(
             "workspaces": WORKSPACES,
             "overview": store.overview(),
             "projects": store.list_projects(),
+            "conversations": store.list_conversations(include_archived=True),
             "agents": store.list_agents(),
             "skills": store.list_skills(),
             "plugins": store.list_plugins(),
@@ -375,6 +449,195 @@ def create_app(
                 complete_approved_action(approval_id, "Plugin enabled; credentials remain pending")
         return decided
 
+    @app.get("/api/conversations", dependencies=[Depends(require_session)])
+    async def conversations(project_id: str, include_archived: bool = False) -> list[dict[str, Any]]:
+        if not store.get_project(project_id):
+            raise HTTPException(status_code=404, detail="Project not found")
+        return store.list_conversations(project_id, include_archived=include_archived)
+
+    @app.post(
+        "/api/conversations",
+        status_code=status.HTTP_201_CREATED,
+        dependencies=[Depends(require_session)],
+    )
+    async def create_conversation(payload: ConversationCreate) -> dict[str, Any]:
+        try:
+            return store.create_conversation(payload.project_id, payload.title)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/conversations/{conversation_id}", dependencies=[Depends(require_session)])
+    async def conversation(conversation_id: str) -> dict[str, Any]:
+        item = store.get_conversation(conversation_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return item
+
+    @app.post("/api/conversations/{conversation_id}/archive", dependencies=[Depends(require_session)])
+    async def archive_conversation(conversation_id: str) -> dict[str, Any]:
+        try:
+            return store.archive_conversation(conversation_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/conversations/{conversation_id}/restore", dependencies=[Depends(require_session)])
+    async def restore_conversation(conversation_id: str) -> dict[str, Any]:
+        try:
+            return store.restore_conversation(conversation_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.delete("/api/conversations/{conversation_id}", dependencies=[Depends(require_session)])
+    async def delete_conversation(conversation_id: str) -> dict[str, bool]:
+        try:
+            store.delete_conversation(conversation_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"deleted": True}
+
+    @app.post("/api/chat/stream", dependencies=[Depends(require_session)])
+    async def stream_chat(payload: ChatRequest) -> StreamingResponse:
+        project = store.get_project(payload.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        conversation_item = store.get_conversation(payload.conversation_id) if payload.conversation_id else None
+        if payload.conversation_id and not conversation_item:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        if conversation_item and conversation_item["project_id"] != payload.project_id:
+            raise HTTPException(status_code=404, detail="Conversation not found for this project")
+        if conversation_item and conversation_item["status"] != "active":
+            raise HTTPException(status_code=409, detail="Archived conversations are read-only")
+        if not conversation_item:
+            conversation_item = store.create_conversation(payload.project_id)
+
+        history = store.conversation_context(conversation_item["id"], limit=12, max_characters=60_000)
+        task = store.create_task(
+            payload.project_id,
+            payload.message[:120],
+            payload.message,
+            "low",
+            "Internal Engineering" if any(word in payload.message.lower() for word in ("code", "build", "test", "github")) else "Aegis",
+            "running",
+        )
+        user_message = store.add_conversation_message(
+            conversation_item["id"],
+            "user",
+            payload.message,
+            task_id=task["id"],
+            provider="owner",
+        )
+        conversation_item = store.get_conversation(conversation_item["id"], message_limit=0) or conversation_item
+
+        def encode_event(event: dict[str, Any]) -> str:
+            return json.dumps(event, ensure_ascii=False, default=str) + "\n"
+
+        async def event_stream() -> AsyncIterator[str]:
+            compilation: dict[str, Any] | None = None
+            answer_parts: list[str] = []
+            token_count = 0
+            try:
+                yield encode_event(
+                    {
+                        "type": "start",
+                        "conversation": conversation_item,
+                        "user_message": user_message,
+                        "task": task,
+                        "status": "Rewriting your request into a bounded execution contract",
+                    }
+                )
+                project_context = {
+                    key: project.get(key)
+                    for key in ("id", "name", "description", "repository_url")
+                }
+                compilation = await asyncio.to_thread(prompt_compiler.compile, payload.message, project_context)
+                store.save_prompt_compilation(task["id"], compilation)
+                yield encode_event({"type": "compilation", "compilation": compilation})
+                yield encode_event({"type": "status", "status": "Thinking with the approved local model"})
+                runtime_context = await runtime_snapshot(project)
+                model_context = {
+                    "project": project_context,
+                    "aegis_runtime": runtime_context,
+                    "conversation_history": history,
+                    "prompt_compiler": {
+                        "objective": compilation["objective"],
+                        "risk_level": compilation["risk_level"],
+                    },
+                }
+                async for model_event in iterate_in_threadpool(
+                    model_gateway.stream_chat(compilation["compiled_prompt"], model_context)
+                ):
+                    if model_event.get("type") == "token":
+                        token = str(model_event.get("content", ""))
+                        if token:
+                            answer_parts.append(token)
+                            yield encode_event({"type": "token", "content": token})
+                    elif model_event.get("type") == "done":
+                        token_count = int(model_event.get("tokens", 0))
+                answer = "".join(answer_parts).strip()
+                if not answer:
+                    raise RuntimeError("Ollama returned an empty streamed response")
+                assistant_message = store.add_conversation_message(
+                    conversation_item["id"],
+                    "assistant",
+                    answer,
+                    task_id=task["id"],
+                    provider="ollama-local",
+                    model=model_gateway.model,
+                    token_count=token_count,
+                    compilation=compilation,
+                )
+                completed_task = store.update_task(task["id"], "completed", answer[:10_000])
+                yield encode_event(
+                    {
+                        "type": "done",
+                        "conversation": store.get_conversation(conversation_item["id"], message_limit=0),
+                        "assistant_message": assistant_message,
+                        "task": completed_task,
+                        "provider": "ollama-local",
+                        "model": model_gateway.model,
+                        "tokens": token_count,
+                    }
+                )
+            except asyncio.CancelledError:
+                try:
+                    store.update_task(task["id"], "failed", "Client disconnected during local token stream")
+                except Exception:
+                    pass
+                raise
+            except Exception as exc:
+                message = f"Local model unavailable: {str(exc)[:500]}"
+                partial = "".join(answer_parts).strip()
+                safe_answer = partial or "Aegis could not reach the approved local model. No cloud fallback was used."
+                assistant_message = store.add_conversation_message(
+                    conversation_item["id"],
+                    "assistant",
+                    safe_answer,
+                    task_id=task["id"],
+                    provider="none",
+                    model=model_gateway.model,
+                    token_count=token_count,
+                    compilation=compilation,
+                    error=message,
+                )
+                try:
+                    failed_task = store.update_task(task["id"], "failed", message)
+                except Exception:
+                    failed_task = store.get_task(task["id"])
+                yield encode_event(
+                    {
+                        "type": "error",
+                        "detail": message,
+                        "assistant_message": assistant_message,
+                        "task": failed_task,
+                    }
+                )
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
     @app.post("/api/chat", dependencies=[Depends(require_session)])
     async def chat(payload: ChatRequest) -> dict[str, Any]:
         project = store.get_project(payload.project_id)
@@ -389,72 +652,10 @@ def create_app(
             "running",
         )
         try:
-            project_context = {key: project.get(key) for key in ("id", "name", "description", "repository_url", "root_path")}
+            project_context = {key: project.get(key) for key in ("id", "name", "description", "repository_url")}
             compilation = await asyncio.to_thread(prompt_compiler.compile, payload.message, project_context)
             store.save_prompt_compilation(task["id"], compilation)
-            ollama_status = await asyncio.to_thread(model_gateway.health)
-            github_status = await asyncio.to_thread(github.status, project)
-            codex_status = await asyncio.to_thread(codex.status, True)
-            runtime_context = {
-                "version": "0.3.0",
-                "workspaces": [item["label"] for item in WORKSPACES],
-                "overview": store.overview(),
-                "agents": [
-                    {"name": item["name"], "role": item["role"], "status": item["status"]}
-                    for item in store.list_agents()
-                ],
-                "skills": [
-                    {"name": item["name"], "version": item["version"], "status": item["status"]}
-                    for item in store.list_skills()
-                ],
-                "controls": {
-                    "prompt_compilation_required": True,
-                    "approval_execution_single_use": True,
-                    "task_state_machine": True,
-                    "sqlcipher_required": True,
-                    "loopback_only": True,
-                    "cloud_private_data": "blocked",
-                },
-                "implemented_capabilities": [
-                    "Local Ollama chat with automatic bounded prompt compilation",
-                    "Single-use approval execution ledger with expiry",
-                    "One-way task lifecycle enforcement",
-                    "Approval-gated Codex and GitHub engineering adapters",
-                    "Encrypted SQLCipher control-plane persistence",
-                    "Audited project, agent, skill, and workspace inventory",
-                ],
-                "integrations": {
-                    "ollama": {
-                        "state": "connected" if ollama_status.get("available") else "unavailable",
-                        "model": ollama_status.get("model"),
-                        "loopback": True,
-                    },
-                    "github": {
-                        "state": (
-                            "connected"
-                            if github_status.get("authenticated") is True
-                            else "not_authenticated"
-                            if github_status.get("authenticated") is False
-                            else "remote_auth_not_verified_offline"
-                        ),
-                        "cli_installed": github_status.get("installed", False),
-                        "repository_registered": bool(project.get("repository_url")),
-                        "remote_verification": github_status.get("remote_verification"),
-                    },
-                    "codex": {
-                        "state": "connected" if codex_status.get("connected") else "not_connected",
-                        "installed": codex_status.get("installed", False),
-                        "chatgpt_account_present": bool(codex_status.get("account")),
-                        "protocol": codex_status.get("protocol"),
-                    },
-                },
-                "answering_rules": [
-                    "Treat only implemented_capabilities as implemented capabilities.",
-                    "Treat skill status proposal or testing as not yet implemented.",
-                    "Report integration states exactly as supplied; do not infer a different state.",
-                    "Never expose account identifiers, executable paths, or secrets.",
-                ],
-            }
+            runtime_context = await runtime_snapshot(project)
             result = await asyncio.to_thread(
                 model_gateway.chat,
                 compilation["compiled_prompt"],

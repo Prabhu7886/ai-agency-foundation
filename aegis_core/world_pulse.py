@@ -92,7 +92,10 @@ class WorldPulseService:
     @classmethod
     def _tier(cls, domain: str) -> str:
         clean = domain.removeprefix("www.")
-        if clean.endswith(".gov") or clean.endswith(".mil") or clean in {"sec.gov", "federalreserve.gov", "imf.org", "worldbank.org", "un.org"}:
+        if clean.endswith(".gov") or clean.endswith(".mil") or clean in {
+            "sec.gov", "federalreserve.gov", "imf.org", "worldbank.org", "un.org",
+            "oecd.org", "europa.eu", "who.int", "wto.org",
+        }:
             return "primary"
         if clean in cls.ESTABLISHED_DOMAINS:
             return "established"

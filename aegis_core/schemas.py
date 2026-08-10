@@ -67,7 +67,13 @@ class ChatHistoryMessage(BaseModel):
 class ChatRequest(BaseModel):
     project_id: str = Field(min_length=2, max_length=100)
     message: str = Field(min_length=1, max_length=50_000)
+    conversation_id: str | None = Field(default=None, min_length=2, max_length=100)
     history: list[ChatHistoryMessage] = Field(default_factory=list, max_length=12)
+
+
+class ConversationCreate(BaseModel):
+    project_id: str = Field(min_length=2, max_length=100)
+    title: str = Field(default="New conversation", max_length=120)
 
 
 class PromptCompileRequest(BaseModel):

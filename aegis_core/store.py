@@ -203,6 +203,227 @@ class AegisStore:
             self._activity(connection, "project_created", f"Created project workspace: {name}", "project", project_id)
         return self.get_project(project_id) or {}
 
+    def list_conversations(self, project_id: str | None = None, *, include_archived: bool = False) -> list[dict[str, Any]]:
+        conditions: list[str] = []
+        parameters: list[Any] = []
+        if project_id:
+            conditions.append("c.project_id = ?")
+            parameters.append(project_id)
+        if not include_archived:
+            conditions.append("c.status = 'active'")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        with self.database.connection() as connection:
+            rows = self._rows(
+                connection.execute(
+                    f"""SELECT c.*, COUNT(m.id) AS message_count, MAX(m.created_at) AS last_message_at
+                    FROM aegis_conversations c
+                    LEFT JOIN aegis_conversation_messages m ON m.conversation_id = c.id
+                    {where}
+                    GROUP BY c.id
+                    ORDER BY c.updated_at DESC""",
+                    parameters,
+                )
+            )
+            for row in rows:
+                preview = connection.execute(
+                    """SELECT content FROM aegis_conversation_messages
+                    WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+                    (row["id"],),
+                ).fetchone()
+                row["preview"] = str(preview[0])[:180] if preview else ""
+                row["message_count"] = int(row["message_count"] or 0)
+                row["encrypted_at_rest"] = True
+        return rows
+
+    def create_conversation(self, project_id: str, title: str = "New conversation") -> dict[str, Any]:
+        if not self.get_project(project_id):
+            raise KeyError("Project not found")
+        conversation_id = new_id("conversation")
+        now = utc_now()
+        clean_title = re.sub(r"\s+", " ", title).strip()[:120] or "New conversation"
+        with self.database.connection() as connection:
+            connection.execute(
+                """INSERT INTO aegis_conversations
+                (id, project_id, title, status, created_at, updated_at)
+                VALUES (?, ?, ?, 'active', ?, ?)""",
+                (conversation_id, project_id, clean_title, now, now),
+            )
+            self._activity(
+                connection,
+                "conversation_created",
+                "Created encrypted local conversation",
+                "conversation",
+                conversation_id,
+            )
+        return self.get_conversation(conversation_id, message_limit=0) or {}
+
+    def get_conversation(self, conversation_id: str, *, message_limit: int = 200) -> dict[str, Any] | None:
+        with self.database.connection() as connection:
+            conversation = self._row(
+                connection.execute("SELECT * FROM aegis_conversations WHERE id = ?", (conversation_id,))
+            )
+            if not conversation:
+                return None
+            conversation["encrypted_at_rest"] = True
+            conversation["messages"] = self._conversation_messages(connection, conversation_id, message_limit)
+            conversation["message_count"] = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM aegis_conversation_messages WHERE conversation_id = ?",
+                    (conversation_id,),
+                ).fetchone()[0]
+            )
+        return conversation
+
+    def _conversation_messages(self, connection: Any, conversation_id: str, limit: int) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        bounded_limit = min(max(int(limit), 1), 500)
+        messages = self._rows(
+            connection.execute(
+                """SELECT * FROM (
+                    SELECT * FROM aegis_conversation_messages
+                    WHERE conversation_id = ?
+                    ORDER BY created_at DESC, rowid DESC LIMIT ?
+                ) ORDER BY created_at ASC""",
+                (conversation_id, bounded_limit),
+            )
+        )
+        for message in messages:
+            message["compilation"] = self._decode(message.pop("compilation_json"), {}) or None
+            message["token_count"] = int(message.get("token_count") or 0)
+        return messages
+
+    def conversation_context(self, conversation_id: str, *, limit: int = 12, max_characters: int = 60_000) -> list[dict[str, str]]:
+        with self.database.connection() as connection:
+            messages = self._conversation_messages(connection, conversation_id, limit)
+        selected: list[dict[str, str]] = []
+        used = 0
+        for message in reversed(messages):
+            content = str(message.get("content", ""))
+            if used + len(content) > max_characters:
+                remaining = max_characters - used
+                if remaining <= 0:
+                    break
+                content = content[-remaining:]
+            selected.append({"role": str(message["role"]), "content": content})
+            used += len(content)
+        return list(reversed(selected))
+
+    def add_conversation_message(
+        self,
+        conversation_id: str,
+        role: str,
+        content: str,
+        *,
+        task_id: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        token_count: int = 0,
+        compilation: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        if role not in {"user", "assistant"}:
+            raise ValueError("Conversation role must be user or assistant")
+        clean_content = content.strip()
+        if not clean_content:
+            raise ValueError("Conversation messages cannot be empty")
+        message_id = new_id("message")
+        now = utc_now()
+        with self.database.connection() as connection:
+            conversation = self._row(
+                connection.execute("SELECT * FROM aegis_conversations WHERE id = ?", (conversation_id,))
+            )
+            if not conversation:
+                raise KeyError("Conversation not found")
+            if conversation["status"] != "active":
+                raise ValueError("Archived conversations are read-only")
+            connection.execute(
+                """INSERT INTO aegis_conversation_messages
+                (id, conversation_id, task_id, role, content, provider, model, token_count,
+                 compilation_json, error, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    message_id,
+                    conversation_id,
+                    task_id,
+                    role,
+                    clean_content[:100_000],
+                    provider,
+                    model,
+                    max(int(token_count), 0),
+                    json.dumps(compilation or {}),
+                    str(error)[:2000] if error else None,
+                    now,
+                ),
+            )
+            if role == "user" and conversation["title"] == "New conversation":
+                title = re.sub(r"\s+", " ", clean_content).strip()[:72]
+                connection.execute(
+                    "UPDATE aegis_conversations SET title = ?, updated_at = ? WHERE id = ?",
+                    (title, now, conversation_id),
+                )
+            else:
+                connection.execute(
+                    "UPDATE aegis_conversations SET updated_at = ? WHERE id = ?",
+                    (now, conversation_id),
+                )
+        conversation = self.get_conversation(conversation_id)
+        if not conversation:
+            raise KeyError("Conversation not found")
+        return next(item for item in conversation["messages"] if item["id"] == message_id)
+
+    def archive_conversation(self, conversation_id: str) -> dict[str, Any]:
+        now = utc_now()
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                "UPDATE aegis_conversations SET status = 'archived', updated_at = ? WHERE id = ? AND status = 'active'",
+                (now, conversation_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("Active conversation not found")
+            self._activity(
+                connection,
+                "conversation_archived",
+                "Archived encrypted local conversation",
+                "conversation",
+                conversation_id,
+            )
+        return self.get_conversation(conversation_id, message_limit=0) or {}
+
+    def restore_conversation(self, conversation_id: str) -> dict[str, Any]:
+        now = utc_now()
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                "UPDATE aegis_conversations SET status = 'active', updated_at = ? WHERE id = ? AND status = 'archived'",
+                (now, conversation_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("Archived conversation not found")
+            self._activity(
+                connection,
+                "conversation_restored",
+                "Restored encrypted local conversation",
+                "conversation",
+                conversation_id,
+            )
+        return self.get_conversation(conversation_id, message_limit=0) or {}
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                "DELETE FROM aegis_conversations WHERE id = ? AND status = 'archived'",
+                (conversation_id,),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("Archived conversation not found")
+            self._activity(
+                connection,
+                "conversation_deleted",
+                "Permanently deleted encrypted local conversation",
+                "conversation",
+                conversation_id,
+            )
+
     def create_task(
         self,
         project_id: str,

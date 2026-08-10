@@ -2,6 +2,8 @@ import { FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useRef, useSta
 import {
   Activity,
   AppWindow,
+  Archive,
+  ArchiveRestore,
   ArrowUpRight,
   AudioLines,
   Bot,
@@ -35,6 +37,7 @@ import {
   Square,
   Target,
   TerminalSquare,
+  Trash2,
   UserRoundCheck,
   Workflow,
   X,
@@ -42,6 +45,7 @@ import {
 } from "lucide-react";
 import { BrandMark } from "./components/BrandMark";
 import {
+  archiveConversation,
   bootstrap,
   changePlugin,
   chat,
@@ -50,14 +54,18 @@ import {
   createProject,
   createSolution,
   createSkill,
+  deleteConversation,
   decideApproval,
   executeResearch,
+  getConversation,
   requestResearch,
   requestDataJob,
+  restoreConversation,
   speakVoice,
+  streamChat,
   transcribeVoice,
 } from "./api";
-import type { Agent, Approval, Bootstrap, Plugin, Project, Skill, Workspace } from "./types";
+import type { Agent, Approval, Bootstrap, Conversation, ConversationMessage, Plugin, Project, Skill, Workspace } from "./types";
 
 const workspaceIcons: Record<string, ReactNode> = {
   "executive-home": <CircleGauge size={17} />,
@@ -85,16 +93,6 @@ function timeAgo(value: string) {
 function StatusPill({ children, tone = "neutral" }: { children: ReactNode; tone?: string }) {
   return <span className={`status-pill status-pill--${tone}`}>{children}</span>;
 }
-
-type AIChatTurn = {
-  id: string;
-  request: string;
-  answer: string;
-  provider: string;
-  createdAt: string;
-  error?: string;
-  compilation?: Awaited<ReturnType<typeof chat>>["compilation"];
-};
 
 function EmptyState({ icon, title, body, action }: { icon: ReactNode; title: string; body: string; action?: ReactNode }) {
   return (
@@ -269,7 +267,7 @@ export default function App() {
           {activeWorkspace === "executive-home" && (
             <ExecutiveHome data={data} project={selectedProject} onChat={(message) => mutate(() => chat(selectedProject!.id, message), "Aegis completed the local turn")} />
           )}
-          {activeWorkspace === "ai-workspace" && <AIWorkspace project={selectedProject} onRefresh={() => refresh(true)} />}
+          {activeWorkspace === "ai-workspace" && <AIWorkspace project={selectedProject} conversations={data.conversations} onRefresh={() => refresh(true)} />}
           {activeWorkspace === "agent-fleet" && (
             <AgentFleet
               agents={data.agents}
@@ -312,50 +310,131 @@ export default function App() {
   );
 }
 
-function AIWorkspace({ project, onRefresh }: { project: Project | null; onRefresh: () => Promise<void> }) {
+function AIWorkspace({ project, conversations, onRefresh }: { project: Project | null; conversations: Conversation[]; onRefresh: () => Promise<void> }) {
   const [message, setMessage] = useState("");
-  const [turns, setTurns] = useState<AIChatTurn[]>([]);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [loadingConversation, setLoadingConversation] = useState(false);
+  const [streamStatus, setStreamStatus] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const conversationEnd = useRef<HTMLDivElement | null>(null);
+  const skipNextConversationLoad = useRef(false);
+  const allProjectConversations = useMemo(
+    () => conversations.filter((item) => item.project_id === project?.id),
+    [conversations, project?.id],
+  );
+  const projectConversations = allProjectConversations.filter((item) => item.status === "active");
+  const archivedConversations = allProjectConversations.filter((item) => item.status === "archived");
+  const displayedConversations = showArchived ? archivedConversations : projectConversations;
+  const currentConversation = allProjectConversations.find((item) => item.id === selectedConversationId) ?? null;
 
   useEffect(() => {
-    conversationEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [turns, sending]);
-
-  useEffect(() => {
-    setTurns([]);
+    setSelectedConversationId(projectConversations[0]?.id ?? null);
+    setMessages([]);
     setMessage("");
+    setShowArchived(false);
   }, [project?.id]);
 
-  const sendMessage = async (request: string, priorTurns: AIChatTurn[]) => {
+  useEffect(() => {
+    if (!selectedConversationId) {
+      setMessages([]);
+      return;
+    }
+    if (skipNextConversationLoad.current) {
+      skipNextConversationLoad.current = false;
+      return;
+    }
+    let cancelled = false;
+    setLoadingConversation(true);
+    void getConversation(selectedConversationId)
+      .then((item) => { if (!cancelled) setMessages(item.messages ?? []); })
+      .catch((reason) => { if (!cancelled) setStreamStatus(reason instanceof Error ? reason.message : "Conversation failed to load"); })
+      .finally(() => { if (!cancelled) setLoadingConversation(false); });
+    return () => { cancelled = true; };
+  }, [selectedConversationId]);
+
+  useEffect(() => {
+    conversationEnd.current?.scrollIntoView({ behavior: sending ? "auto" : "smooth", block: "end" });
+  }, [messages, sending, streamStatus]);
+
+  const newChat = () => {
+    if (sending) return;
+    setShowArchived(false);
+    setSelectedConversationId(null);
+    setMessages([]);
+    setMessage("");
+    setStreamStatus("");
+  };
+
+  const sendMessage = async (request: string) => {
     if (!project || sending) return;
     setSending(true);
-    const history = priorTurns.flatMap((turn) => [
-      { role: "user" as const, content: turn.request },
-      { role: "assistant" as const, content: turn.answer },
-    ]).slice(-12);
+    setStreamStatus("Opening encrypted local stream");
+    const now = new Date().toISOString();
+    const optimisticUserId = `pending-user-${crypto.randomUUID()}`;
+    const optimisticAssistantId = `pending-assistant-${crypto.randomUUID()}`;
+    let resolvedConversationId = selectedConversationId;
+    setMessages((current) => [...current, {
+      id: optimisticUserId,
+      conversation_id: selectedConversationId ?? "pending",
+      role: "user",
+      content: request,
+      provider: "owner",
+      token_count: 0,
+      created_at: now,
+    }, {
+      id: optimisticAssistantId,
+      conversation_id: selectedConversationId ?? "pending",
+      role: "assistant",
+      content: "",
+      provider: "ollama-local",
+      token_count: 0,
+      created_at: now,
+      streaming: true,
+    }]);
     try {
-      const result = await chat(project.id, request, history);
-      setTurns((current) => [...current, {
-        id: crypto.randomUUID(),
-        request,
-        answer: result.answer,
-        provider: result.provider,
-        error: result.error,
-        compilation: result.compilation,
-        createdAt: new Date().toISOString(),
-      }]);
+      await streamChat(project.id, request, selectedConversationId, (event) => {
+        if (event.type === "start") {
+          if (event.conversation) {
+            resolvedConversationId = event.conversation.id;
+            if (event.conversation.id !== selectedConversationId) {
+              skipNextConversationLoad.current = true;
+              setSelectedConversationId(event.conversation.id);
+            }
+          }
+          if (event.user_message) {
+            setMessages((current) => current.map((item) => item.id === optimisticUserId ? event.user_message! : item));
+          }
+          setStreamStatus(event.status ?? "Compiling request");
+        } else if (event.type === "status") {
+          setStreamStatus(event.status ?? "Thinking locally");
+        } else if (event.type === "compilation" && event.compilation) {
+          setMessages((current) => current.map((item) => item.id === optimisticAssistantId ? { ...item, compilation: event.compilation } : item));
+        } else if (event.type === "token" && event.content) {
+          setStreamStatus("Aegis is responding");
+          setMessages((current) => current.map((item) => item.id === optimisticAssistantId ? { ...item, content: item.content + event.content } : item));
+        } else if ((event.type === "done" || event.type === "error") && event.assistant_message) {
+          setMessages((current) => current.map((item) => item.id === optimisticAssistantId ? event.assistant_message! : item));
+          setStreamStatus(event.type === "error" ? event.detail ?? "Local stream failed safely" : "");
+        }
+      });
       await onRefresh();
+      if (resolvedConversationId) {
+        const saved = await getConversation(resolvedConversationId);
+        setMessages(saved.messages ?? []);
+      }
     } catch (reason) {
-      setTurns((current) => [...current, {
-        id: crypto.randomUUID(),
-        request,
-        answer: "Aegis stopped safely before execution.",
+      const error = reason instanceof Error ? reason.message : "Unknown local error";
+      setMessages((current) => current.map((item) => item.id === optimisticAssistantId ? {
+        ...item,
+        content: item.content || "Aegis stopped safely before execution.",
         provider: "none",
-        error: reason instanceof Error ? reason.message : "Unknown local error",
-        createdAt: new Date().toISOString(),
-      }]);
+        error,
+        streaming: false,
+      } : item));
+      setStreamStatus(error);
     } finally {
       setSending(false);
     }
@@ -366,7 +445,7 @@ function AIWorkspace({ project, onRefresh }: { project: Project | null; onRefres
     const request = message.trim();
     if (!request || !project || sending) return;
     setMessage("");
-    await sendMessage(request, turns);
+    await sendMessage(request);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -376,32 +455,58 @@ function AIWorkspace({ project, onRefresh }: { project: Project | null; onRefres
     }
   };
 
-  const copyAnswer = async (turn: AIChatTurn) => {
-    await navigator.clipboard.writeText(turn.answer);
-    setCopiedId(turn.id);
+  const copyAnswer = async (item: ConversationMessage) => {
+    await navigator.clipboard.writeText(item.content);
+    setCopiedId(item.id);
     window.setTimeout(() => setCopiedId(null), 1500);
   };
 
   const regenerate = async () => {
-    const last = turns.at(-1);
-    if (!last || sending) return;
-    const prior = turns.slice(0, -1);
-    setTurns(prior);
-    await sendMessage(last.request, prior);
+    const lastOwnerMessage = [...messages].reverse().find((item) => item.role === "user");
+    if (!lastOwnerMessage || sending) return;
+    await sendMessage(lastOwnerMessage.content);
   };
 
-  return <div className="ai-workspace">
-    <header className="ai-workspace__header"><div><div className="eyebrow"><BrainCircuit size={13} /> AEGIS CONVERSATION</div><h2>{project?.name ?? "AI Workspace"}</h2><p>Private local reasoning with your original intent preserved.</p></div><div className="ai-chat-controls"><StatusPill tone="safe">Ollama local</StatusPill><button className="chat-utility" disabled={sending || turns.length === 0} onClick={() => setTurns([])}><Plus size={14} /> New chat</button></div></header>
-    <section className="ai-conversation">
-      {turns.length === 0 ? <div className="ai-welcome"><div className="ai-welcome__mark"><BrainCircuit size={30} /></div><h3>What are we building?</h3><p>Discuss an idea, analyze a market, make a plan, or prepare a coding task. Aegis keeps the conversation local and shows its execution contract when you need it.</p><div className="ai-starters">{["Turn my idea into a practical plan", "Analyze a business opportunity", "Help me design a secure feature"].map((starter) => <button key={starter} onClick={() => setMessage(starter)}>{starter}<ChevronRight size={13} /></button>)}</div></div> : turns.map((turn) => <article className="ai-turn" key={turn.id}>
-        <div className="ai-message ai-message--owner"><div className="ai-avatar ai-avatar--owner">S</div><div><span>You · {new Date(turn.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span><p>{turn.request}</p></div></div>
-        <div className="ai-message ai-message--aegis"><div className="ai-avatar ai-avatar--aegis"><BrainCircuit size={14} /></div><div className="ai-response"><span>Aegis · {turn.provider}</span><p>{turn.answer}</p>{turn.error && <small>{turn.error}</small>}<div className="ai-message-actions"><button onClick={() => copyAnswer(turn)} title="Copy response">{copiedId === turn.id ? <Check size={13} /> : <Copy size={13} />} {copiedId === turn.id ? "Copied" : "Copy"}</button></div></div></div>
-        {turn.compilation && <details className="prompt-contract ai-contract"><summary><Sparkles size={11} /> View rewritten execution contract · {turn.compilation.risk_level} risk</summary><div><label>Objective</label><p>{turn.compilation.objective}</p><label>Compiled prompt</label><pre>{turn.compilation.compiled_prompt}</pre><footer><span>{turn.compilation.compiler_mode}</span><span>{turn.compilation.data_classification}</span></footer></div></details>}
-      </article>)}
-      {sending && <div className="ai-message ai-message--aegis ai-message--thinking"><div className="ai-avatar ai-avatar--aegis"><BrainCircuit size={14} /></div><div><span>Aegis</span><div className="ai-thinking"><i /><i /><i /> Rewriting your request and thinking locally…</div></div></div>}
-      <div ref={conversationEnd} />
-    </section>
-    <div className="ai-composer-dock">{turns.length > 0 && <button className="regenerate-button" disabled={sending} onClick={regenerate}><RotateCcw size={13} /> Regenerate last response</button>}<form className="ai-composer" onSubmit={submit}><textarea rows={2} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={handleKeyDown} placeholder="Message Aegis…" /><footer><div><LockKeyhole size={13} /> Local first · Enter to send · Shift+Enter for a new line</div><button aria-label="Send message" disabled={!message.trim() || !project || sending}><Send size={16} /></button></footer></form><small className="ai-disclaimer">Aegis can make mistakes. Verify important business, security, and financial decisions.</small></div>
+  const archiveCurrent = async () => {
+    if (!selectedConversationId || sending) return;
+    await archiveConversation(selectedConversationId);
+    const next = projectConversations.find((item) => item.id !== selectedConversationId);
+    setSelectedConversationId(next?.id ?? null);
+    setMessages([]);
+    await onRefresh();
+  };
+
+  const restoreCurrent = async () => {
+    if (!selectedConversationId || sending) return;
+    await restoreConversation(selectedConversationId);
+    setShowArchived(false);
+    await onRefresh();
+  };
+
+  const deleteCurrent = async () => {
+    if (!selectedConversationId || currentConversation?.status !== "archived" || sending) return;
+    if (!window.confirm("Permanently delete this encrypted conversation? This cannot be undone.")) return;
+    await deleteConversation(selectedConversationId);
+    const next = archivedConversations.find((item) => item.id !== selectedConversationId);
+    setSelectedConversationId(next?.id ?? null);
+    setMessages([]);
+    await onRefresh();
+  };
+
+  return <div className="ai-workspace ai-workspace--threads">
+    <aside className="ai-thread-sidebar"><header><div>{showArchived ? <Archive size={15} /> : <MessageSquareText size={15} />}<strong>{showArchived ? "Archived" : "Conversations"}</strong></div><button title="New encrypted chat" onClick={newChat}><Plus size={15} /></button></header><div className="ai-thread-list">{displayedConversations.length === 0 ? <p>{showArchived ? "No archived conversations." : "No saved conversations yet."}</p> : displayedConversations.map((item) => <button className={`${item.id === selectedConversationId ? "active" : ""} ${item.status === "archived" ? "archived" : ""}`} key={item.id} onClick={() => setSelectedConversationId(item.id)}><strong>{item.title}</strong><span>{item.message_count} messages · {timeAgo(item.updated_at)}</span><small>{item.preview || "Encrypted local conversation"}</small></button>)}</div><footer><div><LockKeyhole size={12} /> SQLCipher encrypted</div><button className={showArchived ? "active" : ""} onClick={() => { const nextMode = !showArchived; const nextItems = nextMode ? archivedConversations : projectConversations; setShowArchived(nextMode); setSelectedConversationId(nextItems[0]?.id ?? null); setMessages([]); }}><Archive size={11} /> {archivedConversations.length}</button></footer></aside>
+    <div className="ai-chat-main">
+      <header className="ai-workspace__header"><div><div className="eyebrow"><BrainCircuit size={13} /> AEGIS CONVERSATION</div><h2>{currentConversation?.title ?? project?.name ?? "AI Workspace"}</h2><p>Streaming local reasoning with bounded encrypted history.</p></div><div className="ai-chat-controls"><StatusPill tone="safe">Ollama local · streaming</StatusPill>{currentConversation?.status === "archived" ? <><button className="chat-utility" onClick={() => void restoreCurrent()}><ArchiveRestore size={14} /> Restore</button><button className="chat-utility chat-utility--danger" onClick={() => void deleteCurrent()}><Trash2 size={14} /> Delete</button></> : selectedConversationId ? <button className="chat-utility" disabled={sending} onClick={() => void archiveCurrent()}><Archive size={14} /> Archive</button> : null}<button className="chat-utility" disabled={sending} onClick={newChat}><Plus size={14} /> New chat</button></div></header>
+      <section className="ai-conversation">
+        {loadingConversation ? <div className="ai-message ai-message--aegis ai-message--thinking"><div className="ai-avatar ai-avatar--aegis"><BrainCircuit size={14} /></div><div><span>Aegis</span><div className="ai-thinking"><i /><i /><i /> Decrypting local conversation…</div></div></div> : messages.length === 0 ? <div className="ai-welcome"><div className="ai-welcome__mark"><BrainCircuit size={30} /></div><h3>What are we building?</h3><p>Discuss an idea, analyze a market, make a plan, or prepare a coding task. Every turn is rewritten into a bounded execution contract and saved only in the encrypted local database.</p><div className="ai-starters">{["Turn my idea into a practical plan", "Analyze a business opportunity", "Help me design a secure feature"].map((starter) => <button key={starter} onClick={() => setMessage(starter)}>{starter}<ChevronRight size={13} /></button>)}</div></div> : messages.map((item) => <article className="ai-turn" key={item.id}>
+          <div className={`ai-message ${item.role === "user" ? "ai-message--owner" : "ai-message--aegis"}`}><div className={`ai-avatar ${item.role === "user" ? "ai-avatar--owner" : "ai-avatar--aegis"}`}>{item.role === "user" ? "S" : <BrainCircuit size={14} />}</div><div className={item.role === "assistant" ? "ai-response" : ""}><span>{item.role === "user" ? "You" : "Aegis"} · {item.provider ?? "local"} · {new Date(item.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>{item.content ? <p>{item.content}{item.streaming && <i className="stream-cursor" />}</p> : item.streaming ? <div className="ai-thinking"><i /><i /><i /> {streamStatus || "Thinking locally…"}</div> : null}{item.error && <small>{item.error}</small>}{item.role === "assistant" && item.content && <div className="ai-message-actions"><button onClick={() => void copyAnswer(item)} title="Copy response">{copiedId === item.id ? <Check size={13} /> : <Copy size={13} />} {copiedId === item.id ? "Copied" : "Copy"}</button></div>}</div></div>
+          {item.compilation && <details className="prompt-contract ai-contract"><summary><Sparkles size={11} /> View rewritten execution contract · {item.compilation.risk_level} risk</summary><div><label>Objective</label><p>{item.compilation.objective}</p><label>Compiled prompt</label><pre>{item.compilation.compiled_prompt}</pre><footer><span>{item.compilation.compiler_mode}</span><span>{item.compilation.data_classification}</span></footer></div></details>}
+        </article>)}
+        {streamStatus && !sending && <div className="ai-stream-status">{streamStatus}</div>}
+        <div ref={conversationEnd} />
+      </section>
+      {currentConversation?.status === "archived" ? <div className="ai-archived-actions"><Archive size={15} /><span>This encrypted conversation is read-only.</span><button onClick={() => void restoreCurrent()}><ArchiveRestore size={14} /> Restore conversation</button></div> : <div className="ai-composer-dock">{messages.length > 0 && <button className="regenerate-button" disabled={sending} onClick={() => void regenerate()}><RotateCcw size={13} /> Regenerate last response</button>}<form className="ai-composer" onSubmit={submit}><textarea rows={2} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={handleKeyDown} placeholder="Message Aegis…" /><footer><div><LockKeyhole size={13} /> Encrypted history · Live local tokens · Enter to send</div><button aria-label="Send message" disabled={!message.trim() || !project || sending}><Send size={16} /></button></footer></form><small className="ai-disclaimer">Aegis can make mistakes. Verify important business, security, and financial decisions.</small></div>}
+    </div>
   </div>;
 }
 
@@ -585,7 +690,7 @@ function OpportunityEngine({ data, project, onResearch, onCreate }: {
     <div className="source-policy"><ShieldCheck size={16} /><span>Public sources only. Each run requires approval, blocks private/client data, records citations, and produces an encrypted local report.</span></div>
     <div className="opportunity-summary-grid"><div className="allocation-panel"><div className="allocation-ring"><span><strong>80 / 20</strong><small>allocation</small></span></div><div><h3>Existing businesses</h3><div className="allocation-bar"><i style={{ width: "80%" }} /></div><p>80% improves and monetizes what we already own.</p><h3>Exploration</h3><div className="allocation-bar exploration"><i style={{ width: "20%" }} /></div><p>20% tests new AI opportunities with strict stop criteria.</p></div></div><div className="opportunity-metrics"><article><strong>{reports.length}</strong><span>Research reports</span></article><article><strong>{data.opportunities.length}</strong><span>Scored opportunities</span></article><article><strong>{reports.reduce((total, item) => total + item.source_count, 0)}</strong><span>Accepted sources</span></article></div></div>
     <section className="opportunity-section"><PanelHeader icon={<Radar size={17} />} title="Opportunity research reports" action={<StatusPill tone={reports.length ? "safe" : "neutral"}>{reports.length} ready</StatusPill>} />
-      {reports.length === 0 ? <EmptyState icon={<Radar />} title="No research report yet" body="Submit a public topic, approve it in Approval Center, and Aegis will return here with a source-backed executive report." /> : <div className="research-report-list">{reports.map((item) => <article className="research-report" key={item.id}><header><div><div className="eyebrow">PUBLIC RESEARCH · {new Date(item.created_at).toLocaleString()}</div><h3>{item.report.title}</h3></div><StatusPill tone={item.independent_domains >= 2 ? "safe" : "warning"}>{item.source_count} sources · {item.independent_domains} domains</StatusPill></header><section><h4>Executive Summary</h4><ul>{item.report.executive_summary.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Key findings</h4><div className="report-findings">{item.report.key_findings.map((finding, index) => <article key={`${finding.headline}-${index}`}><div><StatusPill tone={finding.confidence >= .7 ? "safe" : "neutral"}>{Math.round(finding.confidence * 100)}% confidence</StatusPill><span>{finding.source_ids.join(", ")}</span></div><h5>{finding.headline}</h5><p>{finding.evidence}</p><small>{finding.implication}</small></article>)}</div></section><details><summary>Recommendations, questions, caveats, and sources</summary><div className="report-detail-grid"><section><h4>Recommended next steps</h4><ol>{item.report.recommended_next_steps.map((line) => <li key={line}>{line}</li>)}</ol></section><section><h4>Further questions</h4><ul>{item.report.further_questions.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Caveats</h4><ul>{item.report.caveats.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Sources</h4><div className="report-sources">{item.report.sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer"><span>{source.id} · {source.domain}</span>{source.title}<ArrowUpRight size={12} /></a>)}</div></section></div></details></article>)}</div>}
+      {reports.length === 0 ? <EmptyState icon={<Radar />} title="No research report yet" body="Submit a public topic, approve it in Approval Center, and Aegis will return here with a source-backed executive report." /> : <div className="research-report-list">{reports.map((item) => <article className="research-report" key={item.id}><header><div><div className="eyebrow">PUBLIC RESEARCH · {new Date(item.created_at).toLocaleString()}</div><h3>{item.report.title}</h3></div><div className="report-badges"><StatusPill tone={item.report.quality_gate === "supported_discovery" ? "safe" : "warning"}>{item.report.quality_gate?.replaceAll("_", " ") ?? "legacy quality"}</StatusPill><StatusPill tone={item.independent_domains >= 2 ? "safe" : "warning"}>{item.source_count} sources · {item.independent_domains} domains</StatusPill></div></header><section><h4>Executive Summary</h4><ul>{item.report.executive_summary.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Key findings</h4><div className="report-findings">{item.report.key_findings.map((finding, index) => <article key={`${finding.headline}-${index}`}><div><StatusPill tone={finding.confidence >= .7 ? "safe" : "neutral"}>{Math.round(finding.confidence * 100)}% confidence</StatusPill><span>{finding.source_ids.join(", ")}</span></div><h5>{finding.headline}</h5><p>{finding.evidence}</p><small>{finding.implication}</small></article>)}</div></section><details><summary>Recommendations, questions, caveats, and sources</summary><div className="report-detail-grid"><section><h4>Recommended next steps</h4><ol>{item.report.recommended_next_steps.map((line) => <li key={line}>{line}</li>)}</ol></section><section><h4>Further questions</h4><ul>{item.report.further_questions.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Caveats</h4><ul>{item.report.caveats.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Sources</h4><div className="report-sources">{item.report.sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer"><span>{source.id} · {source.domain} · {source.source_tier} · {source.freshness_state ?? "unknown date"}</span>{source.title}<ArrowUpRight size={12} /></a>)}</div></section></div></details></article>)}</div>}
     </section>
     <section className="opportunity-section"><PanelHeader icon={<CircleGauge size={17} />} title="Evidence-backed scorecard" action={<StatusPill>{data.opportunities.length} scored</StatusPill>} /><details className="manual-score"><summary><Plus size={13} /> Score a researched opportunity manually</summary><OpportunityCreateForm onCreate={onCreate} /></details>{data.opportunities.length === 0 ? <EmptyState icon={<Zap />} title="No unsupported promises" body="Score an opportunity only after the research report is reviewed and customer or pricing evidence is attached." /> : <div className="card-grid">{data.opportunities.map((item, index) => <article className="entity-card" key={index}><StatusPill tone="safe">{String(item.score)} / 100</StatusPill><h3>{String(item.title)}</h3><p>{String(item.thesis)}</p><small>{String(item.allocation)}</small></article>)}</div>}</section>
   </div>;

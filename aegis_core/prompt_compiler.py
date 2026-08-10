@@ -49,7 +49,12 @@ class PromptCompiler:
             f"OWNER REQUEST:\n{original}"
         )
         try:
-            response = self.gateway.generate(prompt, json_mode=True, timeout_seconds=120)
+            response = self.gateway.generate(
+                prompt,
+                json_mode=True,
+                timeout_seconds=120,
+                options={"num_predict": 512, "temperature": 0.1, "num_ctx": 4096},
+            )
             compiled = json.loads(str(response.get("response", "{}")))
             result = self._normalize(compiled, original, minimum_risk)
             result["compiler_mode"] = "ollama-local"

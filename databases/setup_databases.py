@@ -135,6 +135,17 @@ CREATE TABLE IF NOT EXISTS aegis_projects (
 );
 CREATE INDEX IF NOT EXISTS idx_aegis_projects_status ON aegis_projects(status, updated_at);
 
+CREATE TABLE IF NOT EXISTS aegis_conversations (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES aegis_projects(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_conversations_project
+ON aegis_conversations(project_id, status, updated_at);
+
 CREATE TABLE IF NOT EXISTS aegis_tasks (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES aegis_projects(id) ON DELETE CASCADE,
@@ -165,6 +176,22 @@ CREATE TABLE IF NOT EXISTS aegis_prompt_compilations (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_aegis_prompt_task ON aegis_prompt_compilations(task_id, created_at);
+
+CREATE TABLE IF NOT EXISTS aegis_conversation_messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES aegis_conversations(id) ON DELETE CASCADE,
+    task_id TEXT REFERENCES aegis_tasks(id) ON DELETE SET NULL,
+    role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+    content TEXT NOT NULL,
+    provider TEXT,
+    model TEXT,
+    token_count INTEGER NOT NULL DEFAULT 0 CHECK(token_count >= 0),
+    compilation_json TEXT NOT NULL DEFAULT '{}',
+    error TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_conversation_messages_thread
+ON aegis_conversation_messages(conversation_id, created_at);
 
 CREATE TABLE IF NOT EXISTS aegis_agent_registry (
     id TEXT PRIMARY KEY,
@@ -418,6 +445,8 @@ class DatabaseSetup:
             "open_source_intel",
             "mobile_sessions",
             "aegis_projects",
+            "aegis_conversations",
+            "aegis_conversation_messages",
             "aegis_tasks",
             "aegis_prompt_compilations",
             "aegis_agent_registry",

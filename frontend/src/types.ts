@@ -1,4 +1,17 @@
 export type Workspace = { id: string; label: string; description: string };
+export type PromptCompilation = {
+  id?: string;
+  original_prompt: string;
+  compiled_prompt: string;
+  objective: string;
+  data_classification: string;
+  risk_level: string;
+  approvals_required?: string[];
+  success_evidence?: string[];
+  compiler_mode: string;
+  model?: string | null;
+  created_at?: string;
+};
 export type Project = {
   id: string;
   name: string;
@@ -19,20 +32,35 @@ export type Task = {
   risk_level: string;
   assigned_agent?: string | null;
   result_summary?: string | null;
-  prompt_compilation?: {
-    id: string;
-    original_prompt: string;
-    compiled_prompt: string;
-    objective: string;
-    data_classification: string;
-    risk_level: string;
-    approvals_required: string[];
-    success_evidence: string[];
-    compiler_mode: string;
-    model?: string | null;
-    created_at: string;
-  } | null;
+  prompt_compilation?: PromptCompilation | null;
   updated_at: string;
+};
+export type ConversationMessage = {
+  id: string;
+  conversation_id: string;
+  task_id?: string | null;
+  role: "user" | "assistant";
+  content: string;
+  provider?: string | null;
+  model?: string | null;
+  token_count: number;
+  compilation?: PromptCompilation | null;
+  error?: string | null;
+  created_at: string;
+  streaming?: boolean;
+};
+export type Conversation = {
+  id: string;
+  project_id: string;
+  title: string;
+  status: "active" | "archived";
+  created_at: string;
+  updated_at: string;
+  last_message_at?: string | null;
+  message_count: number;
+  preview?: string;
+  encrypted_at_rest: boolean;
+  messages?: ConversationMessage[];
 };
 export type Agent = {
   id: string;
@@ -106,13 +134,14 @@ export type ResearchReport = {
     generated_at: string;
     classification: string;
     decision_state: string;
+    quality_gate?: string;
     executive_summary: string[];
     key_findings: Array<{ headline: string; evidence: string; source_ids: string[]; confidence: number; implication: string }>;
     recommended_next_steps: string[];
     further_questions: string[];
     caveats: string[];
     source_metrics: Record<string, unknown>;
-    sources: Array<{ id: string; title: string; url: string; domain: string; source_tier: string; verification_state: string; confidence: number }>;
+    sources: Array<{ id: string; title: string; url: string; domain: string; source_tier: string; verification_state: string; confidence: number; published_at?: string | null; freshness_state?: string }>;
   };
 };
 export type Bootstrap = {
@@ -126,6 +155,7 @@ export type Bootstrap = {
     opportunity_allocation: { existing: number; exploration: number };
   };
   projects: Project[];
+  conversations: Conversation[];
   agents: Agent[];
   skills: Skill[];
   plugins: Plugin[];

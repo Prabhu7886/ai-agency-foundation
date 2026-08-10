@@ -1,4 +1,4 @@
-import type { Bootstrap, Project } from "./types";
+import type { Bootstrap, Conversation, ConversationMessage, Project, PromptCompilation, Task } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -74,6 +74,72 @@ export function chat(
   };
 }> {
   return request("/api/chat", { method: "POST", body: JSON.stringify({ project_id: projectId, message, history }) });
+}
+
+export type ChatStreamEvent = {
+  type: "start" | "status" | "compilation" | "token" | "done" | "error";
+  status?: string;
+  content?: string;
+  detail?: string;
+  conversation?: Conversation;
+  user_message?: ConversationMessage;
+  assistant_message?: ConversationMessage;
+  compilation?: PromptCompilation;
+  task?: Task;
+  provider?: string;
+  model?: string;
+  tokens?: number;
+};
+
+export async function streamChat(
+  projectId: string,
+  message: string,
+  conversationId: string | null,
+  onEvent: (event: ChatStreamEvent) => void,
+): Promise<void> {
+  const response = await fetch("/api/chat/stream", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project_id: projectId, message, conversation_id: conversationId }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail ?? `Aegis stream failed (${response.status})`);
+  }
+  if (!response.body) throw new Error("Aegis returned an empty stream");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const emitLine = (line: string) => {
+    if (!line.trim()) return;
+    onEvent(JSON.parse(line) as ChatStreamEvent);
+  };
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    lines.forEach(emitLine);
+    if (done) break;
+  }
+  emitLine(buffer);
+}
+
+export function getConversation(conversationId: string): Promise<Conversation> {
+  return request(`/api/conversations/${conversationId}`);
+}
+
+export function archiveConversation(conversationId: string): Promise<Conversation> {
+  return request(`/api/conversations/${conversationId}/archive`, { method: "POST" });
+}
+
+export function restoreConversation(conversationId: string): Promise<Conversation> {
+  return request(`/api/conversations/${conversationId}/restore`, { method: "POST" });
+}
+
+export function deleteConversation(conversationId: string): Promise<{ deleted: boolean }> {
+  return request(`/api/conversations/${conversationId}`, { method: "DELETE" });
 }
 
 export function requestResearch(

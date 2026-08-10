@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import urlparse
 
 import requests
@@ -53,8 +53,7 @@ class LocalModelGateway:
             return {"available": False, "endpoint": self.endpoint, "model": self.model, "error": str(exc)[:300]}
 
     def chat(self, message: str, project_context: dict[str, Any] | None = None) -> dict[str, Any]:
-        context = json.dumps(project_context or {}, ensure_ascii=False, default=str)[:8000]
-        prompt = f"{AEGIS_EXECUTIVE_PROMPT}\n\nPROJECT CONTEXT:\n{context}\n\nOWNER:\n{message.strip()}"
+        prompt = self._executive_prompt(message, project_context)
         payload = self.generate(prompt)
         answer = str(payload.get("response", "")).strip()
         if not answer:
@@ -67,11 +66,66 @@ class LocalModelGateway:
             "tokens": int(payload.get("eval_count", 0)),
         }
 
-    def generate(self, prompt: str, *, json_mode: bool = False, timeout_seconds: int = 180) -> dict[str, Any]:
+    def stream_chat(
+        self,
+        message: str,
+        project_context: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: int = 180,
+    ) -> Iterator[dict[str, Any]]:
+        """Yield local Ollama tokens and a final usage event without buffering the answer."""
+        body = {
+            "model": self.model,
+            "prompt": self._executive_prompt(message, project_context),
+            "stream": True,
+            "keep_alive": -1,
+        }
+        with requests.post(
+            f"{self.endpoint}/api/generate",
+            json=body,
+            stream=True,
+            timeout=(3, timeout_seconds),
+        ) as response:
+            response.raise_for_status()
+            saw_done = False
+            for raw_line in response.iter_lines():
+                if not raw_line:
+                    continue
+                payload = json.loads(raw_line.decode("utf-8"))
+                if payload.get("error"):
+                    raise RuntimeError(str(payload["error"])[:500])
+                token = str(payload.get("response", ""))
+                if token:
+                    yield {"type": "token", "content": token}
+                if payload.get("done"):
+                    saw_done = True
+                    yield {
+                        "type": "done",
+                        "tokens": int(payload.get("eval_count", 0)),
+                        "prompt_tokens": int(payload.get("prompt_eval_count", 0)),
+                    }
+            if not saw_done:
+                raise RuntimeError("Ollama stream ended before the completion event")
+
+    @staticmethod
+    def _executive_prompt(message: str, project_context: dict[str, Any] | None) -> str:
+        context = json.dumps(project_context or {}, ensure_ascii=False, default=str)[:60_000]
+        return f"{AEGIS_EXECUTIVE_PROMPT}\n\nPROJECT CONTEXT:\n{context}\n\nOWNER:\n{message.strip()}"
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        json_mode: bool = False,
+        timeout_seconds: int = 180,
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Generate locally, optionally requiring Ollama's JSON output mode."""
         body: dict[str, Any] = {"model": self.model, "prompt": prompt, "stream": False, "keep_alive": -1}
         if json_mode:
             body["format"] = "json"
+        if options:
+            body["options"] = options
         response = requests.post(
             f"{self.endpoint}/api/generate",
             json=body,
