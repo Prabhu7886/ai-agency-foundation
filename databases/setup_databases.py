@@ -267,6 +267,8 @@ CREATE TABLE IF NOT EXISTS aegis_approvals (
     project_id TEXT REFERENCES aegis_projects(id) ON DELETE SET NULL,
     task_id TEXT REFERENCES aegis_tasks(id) ON DELETE SET NULL,
     action TEXT NOT NULL,
+    approval_queue TEXT NOT NULL DEFAULT 'security_operations'
+        CHECK(approval_queue IN ('security_operations', 'business_creative')),
     summary TEXT NOT NULL,
     risk_level TEXT NOT NULL CHECK(risk_level IN ('low', 'medium', 'high', 'critical')),
     status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'declined', 'expired')),
@@ -350,6 +352,32 @@ CREATE TABLE IF NOT EXISTS aegis_solutions (
     stage TEXT NOT NULL DEFAULT 'discover',
     proof TEXT NOT NULL DEFAULT '',
     owner_agent TEXT,
+    opportunity_id TEXT REFERENCES aegis_opportunities(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aegis_academy_courses (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'Independent',
+    source_url TEXT,
+    status TEXT NOT NULL DEFAULT 'planned' CHECK(status IN ('planned', 'active', 'completed', 'paused')),
+    progress FLOAT NOT NULL DEFAULT 0 CHECK(progress BETWEEN 0 AND 100),
+    learning_goal TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aegis_learning_memory (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK(kind IN ('explicit', 'inferred')),
+    category TEXT NOT NULL,
+    statement TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    confidence FLOAT NOT NULL DEFAULT 1 CHECK(confidence BETWEEN 0 AND 1),
+    status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN ('proposed', 'confirmed', 'disabled')),
+    affects_authority BOOLEAN NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -430,6 +458,14 @@ class DatabaseSetup:
     def setup_sqlcipher(self) -> dict[str, Any]:
         with self.connection() as connection:
             connection.executescript(SCHEMA)
+            approval_columns = {row[1] for row in connection.execute("PRAGMA table_info(aegis_approvals)").fetchall()}
+            if "approval_queue" not in approval_columns:
+                connection.execute(
+                    "ALTER TABLE aegis_approvals ADD COLUMN approval_queue TEXT NOT NULL DEFAULT 'security_operations'"
+                )
+            solution_columns = {row[1] for row in connection.execute("PRAGMA table_info(aegis_solutions)").fetchall()}
+            if "opportunity_id" not in solution_columns:
+                connection.execute("ALTER TABLE aegis_solutions ADD COLUMN opportunity_id TEXT")
             tables = {
                 row[0]
                 for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
@@ -464,6 +500,8 @@ class DatabaseSetup:
             "aegis_solutions",
             "aegis_activity",
             "aegis_data_jobs",
+            "aegis_academy_courses",
+            "aegis_learning_memory",
         }
         missing = required - tables
         if missing:

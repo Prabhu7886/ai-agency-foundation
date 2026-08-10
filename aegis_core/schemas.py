@@ -160,8 +160,34 @@ class SolutionCreate(BaseModel):
     audience: str = Field(min_length=2, max_length=500)
     proof: str = Field(default="", max_length=5_000)
     owner_agent: str | None = Field(default=None, max_length=100)
+    opportunity_id: str | None = Field(default=None, max_length=100)
 
 
 class SolutionTransitionRequest(BaseModel):
     target_stage: Literal["validate", "prototype", "pilot", "scale"]
     proof: str = Field(min_length=10, max_length=5_000)
+
+
+class AcademyCourseCreate(BaseModel):
+    title: str = Field(min_length=3, max_length=200)
+    provider: str = Field(default="Independent", min_length=2, max_length=100)
+    source_url: str | None = Field(default=None, max_length=1000)
+    learning_goal: str = Field(default="", max_length=2000)
+
+
+class AcademyCourseUpdate(BaseModel):
+    status: Literal["planned", "active", "completed", "paused"]
+    progress: float = Field(ge=0, le=100)
+
+
+class LearningMemoryCreate(BaseModel):
+    kind: Literal["explicit", "inferred"] = "explicit"
+    category: Literal["communication", "workflow", "learning", "business"]
+    statement: str = Field(min_length=3, max_length=2000)
+    reason: str = Field(default="", max_length=2000)
+    confidence: float = Field(default=1, ge=0, le=1)
+    affects_authority: bool = False
+
+
+class LearningMemoryDecision(BaseModel):
+    status: Literal["confirmed", "disabled"]

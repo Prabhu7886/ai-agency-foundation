@@ -400,6 +400,36 @@ body::before {
 .voice-orb.recording i { border-color: rgba(251,113,133,.2); animation-duration: 1s; }
 .voice-workspace h2 { font: 600 24px "Bahnschrift", "Segoe UI", sans-serif; }
 .voice-workspace > p { color: var(--muted); max-width: 520px; font-size: 10px; line-height: 1.7; }
+
+.niche-tabs, .approval-queue-tabs { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 0 16px; }
+.niche-tabs button, .approval-queue-tabs button { border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,.018); color: #77879b; padding: 8px 12px; text-transform: capitalize; font-size: 9px; cursor: pointer; }
+.niche-tabs button.active, .approval-queue-tabs button.active { color: var(--cyan); border-color: rgba(34,211,238,.35); background: var(--cyan-soft); }
+.reader-button { display: inline-flex; align-items: center; gap: 5px; margin-top: 12px; border: 0; background: transparent; color: var(--cyan); font-size: 9px; cursor: pointer; }
+.reader-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(1,5,10,.76); backdrop-filter: blur(8px); display: flex; justify-content: flex-end; }
+.pulse-reader { width: min(570px, 94vw); height: 100%; overflow: auto; padding: 32px; background: #07101a; border-left: 1px solid rgba(34,211,238,.2); }
+.pulse-reader header { display: flex; justify-content: space-between; gap: 18px; }
+.pulse-reader h2 { font: 600 28px/1.15 "Bahnschrift", "Segoe UI", sans-serif; }
+.pulse-reader > p, .pulse-reader section p { color: var(--muted); line-height: 1.75; }
+.reader-evidence { display: flex; align-items: center; gap: 10px; margin: 20px 0; color: #718197; font-size: 9px; }
+.approval-queue-tabs button { display: flex; align-items: center; gap: 8px; border-radius: 10px; }
+.approval-queue-tabs b { min-width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: rgba(255,255,255,.06); }
+.hub-hero { min-height: 330px; display: grid; grid-template-columns: minmax(190px, 290px) minmax(0, 1fr); align-items: center; gap: 36px; padding: 20px 24px 30px; border-bottom: 1px solid var(--line); }
+.hub-hero img { width: 100%; max-height: 310px; object-fit: cover; object-position: center 20%; border-radius: 24px; border: 1px solid rgba(34,211,238,.24); box-shadow: 0 25px 80px rgba(0,0,0,.42); }
+.hub-hero h2 { margin: 10px 0; font: 600 clamp(38px, 6vw, 70px)/1 "Bahnschrift", "Segoe UI", sans-serif; color: #f3f7fb; }
+.hub-hero p { color: var(--muted); max-width: 660px; line-height: 1.7; }
+.hub-tabs { margin: 18px 0; }
+.hub-grid, .learning-control { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.hub-grid .panel p, .hub-grid .panel li { color: var(--muted); font-size: 11px; line-height: 1.7; }
+.academy-layout { display: grid; grid-template-columns: minmax(270px, .75fr) minmax(0, 1.5fr); gap: 18px; }
+.academy-form, .learning-control form { display: grid; gap: 11px; align-content: start; }
+.academy-form label { display: grid; gap: 6px; color: #8290a4; font-size: 9px; }
+.academy-form input, .academy-form textarea, .learning-control textarea { border: 1px solid var(--line); border-radius: 9px; background: rgba(3,8,14,.52); color: #e6eef8; padding: 10px; resize: vertical; }
+.academy-form small, .learning-control p { color: #68778b; font-size: 9px; line-height: 1.6; }
+.learning-cycle { border: 1px solid rgba(34,211,238,.16); border-radius: 11px; padding: 12px; margin-bottom: 14px; color: var(--cyan); font-size: 9px; text-align: center; }
+.course-list, .memory-list { display: grid; gap: 12px; }
+.progress-track { height: 5px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.06); margin: 14px 0; }
+.progress-track i { display: block; height: 100%; background: linear-gradient(90deg, var(--cyan), var(--green)); }
+.course-list footer button, .memory-list footer button { border: 1px solid var(--line); border-radius: 7px; background: transparent; color: #9aabc0; padding: 5px 9px; cursor: pointer; }
 .workspace-action-form { margin: 0 24px 18px; flex-wrap: wrap; }
 .workspace-action-form input { min-width: 180px; }
 @keyframes breathe { 50% { transform: scale(1.05); opacity: .45; } }
@@ -469,6 +499,9 @@ body::before {
   .github-operation-form { grid-template-columns: 1fr; }
   .github-operation-form .primary-button { width: 100%; }
   .workspace-intro { padding: 14px 4px 22px; min-height: 160px; }
+  .hub-hero, .academy-layout, .hub-grid, .learning-control { grid-template-columns: 1fr; }
+  .hub-hero { padding: 6px 0 22px; }
+  .hub-hero img { max-height: 360px; }
   .intro-icon { width: 70px; height: 70px; margin: 0; }
   .allocation-panel { grid-template-columns: 1fr; }
   .opportunity-summary-grid { grid-template-columns: 1fr; }

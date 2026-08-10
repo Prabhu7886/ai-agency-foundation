@@ -732,15 +732,20 @@ class AegisStore:
         project_id: str | None = None,
         task_id: str | None = None,
         evidence: dict[str, Any] | None = None,
+        approval_queue: str | None = None,
     ) -> dict[str, Any]:
         approval_id = new_id("approval")
         now = utc_now()
+        business_actions = {"solution_transition", "business_asset", "launch", "publish", "purchase"}
+        queue = approval_queue or ("business_creative" if action in business_actions else "security_operations")
+        if queue not in {"security_operations", "business_creative"}:
+            raise ValueError("Unsupported approval queue")
         with self.database.connection() as connection:
             connection.execute(
                 """INSERT INTO aegis_approvals
-                (id, project_id, task_id, action, summary, risk_level, status, evidence_json, requested_at)
-                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
-                (approval_id, project_id, task_id, action, summary, risk_level, json.dumps(evidence or {}), now),
+                (id, project_id, task_id, action, approval_queue, summary, risk_level, status, evidence_json, requested_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                (approval_id, project_id, task_id, action, queue, summary, risk_level, json.dumps(evidence or {}), now),
             )
             self._activity(connection, "approval_requested", summary, "approval", approval_id)
         return self.get_approval(approval_id) or {}
@@ -1027,12 +1032,78 @@ class AegisStore:
         with self.database.connection() as connection:
             connection.execute(
                 """INSERT INTO aegis_solutions
-                (id, title, problem, audience, stage, proof, owner_agent, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 'discover', ?, ?, ?, ?)""",
-                (solution_id, payload["title"], payload["problem"], payload["audience"], payload.get("proof", ""), payload.get("owner_agent"), now, now),
+                (id, title, problem, audience, stage, proof, owner_agent, opportunity_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'discover', ?, ?, ?, ?, ?)""",
+                (solution_id, payload["title"], payload["problem"], payload["audience"], payload.get("proof", ""), payload.get("owner_agent"), payload.get("opportunity_id"), now, now),
             )
             self._activity(connection, "solution_created", f"Created solution program: {payload['title']}", "solution", solution_id)
         return next(item for item in self.list_solutions() if item["id"] == solution_id)
+
+    def list_academy_courses(self) -> list[dict[str, Any]]:
+        with self.database.connection() as connection:
+            return self._rows(connection.execute("SELECT * FROM aegis_academy_courses ORDER BY updated_at DESC"))
+
+    def create_academy_course(self, payload: dict[str, Any]) -> dict[str, Any]:
+        course_id = new_id("course")
+        now = utc_now()
+        with self.database.connection() as connection:
+            connection.execute(
+                """INSERT INTO aegis_academy_courses
+                (id, title, provider, source_url, status, progress, learning_goal, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'planned', 0, ?, ?, ?)""",
+                (course_id, payload["title"], payload.get("provider", "Independent"), payload.get("source_url"), payload.get("learning_goal", ""), now, now),
+            )
+            self._activity(connection, "academy_course_added", f"Added course: {payload['title']}", "academy_course", course_id)
+        return next(item for item in self.list_academy_courses() if item["id"] == course_id)
+
+    def update_academy_course(self, course_id: str, status: str, progress: float) -> dict[str, Any]:
+        if status not in {"planned", "active", "completed", "paused"}:
+            raise ValueError("Unsupported course status")
+        now = utc_now()
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                "UPDATE aegis_academy_courses SET status = ?, progress = ?, updated_at = ? WHERE id = ?",
+                (status, progress, now, course_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("Course not found")
+            self._activity(connection, "academy_progress_updated", f"Course progress updated to {progress:.0f}%", "academy_course", course_id)
+        return next(item for item in self.list_academy_courses() if item["id"] == course_id)
+
+    def list_learning_memory(self) -> list[dict[str, Any]]:
+        with self.database.connection() as connection:
+            rows = self._rows(connection.execute("SELECT * FROM aegis_learning_memory ORDER BY updated_at DESC"))
+        for row in rows:
+            row["affects_authority"] = bool(row["affects_authority"])
+        return rows
+
+    def create_learning_memory(self, payload: dict[str, Any]) -> dict[str, Any]:
+        memory_id = new_id("memory")
+        now = utc_now()
+        kind = payload.get("kind", "explicit")
+        affects_authority = bool(payload.get("affects_authority", False))
+        status = "proposed" if kind == "inferred" or affects_authority else "confirmed"
+        with self.database.connection() as connection:
+            connection.execute(
+                """INSERT INTO aegis_learning_memory
+                (id, kind, category, statement, reason, confidence, status, affects_authority, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (memory_id, kind, payload["category"], payload["statement"], payload.get("reason", ""), payload.get("confidence", 1), status, int(affects_authority), now, now),
+            )
+            self._activity(connection, "learning_memory_created", f"Created {kind} memory proposal", "learning_memory", memory_id)
+        return next(item for item in self.list_learning_memory() if item["id"] == memory_id)
+
+    def set_learning_memory_status(self, memory_id: str, status: str) -> dict[str, Any]:
+        if status not in {"confirmed", "disabled"}:
+            raise ValueError("Unsupported memory status")
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                "UPDATE aegis_learning_memory SET status = ?, updated_at = ? WHERE id = ?",
+                (status, utc_now(), memory_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("Memory not found")
+        return next(item for item in self.list_learning_memory() if item["id"] == memory_id)
 
     def transition_solution(self, solution_id: str, target_stage: str, proof: str) -> dict[str, Any]:
         stages = ["discover", "validate", "prototype", "pilot", "scale"]

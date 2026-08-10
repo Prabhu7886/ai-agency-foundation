@@ -110,6 +110,7 @@ export type Plugin = {
 export type Approval = {
   id: string;
   action: string;
+  approval_queue: "security_operations" | "business_creative";
   summary: string;
   risk_level: string;
   status: string;
@@ -125,12 +126,35 @@ export type Activity = {
   created_at: string;
 };
 export type WorldPulseItem = {
+  id?: string;
+  region?: string;
+  category?: string;
   headline: string;
   summary: string;
   source_url?: string | null;
   domain?: string | null;
   confidence: number;
   verification_state: string;
+};
+export type AcademyCourse = {
+  id: string;
+  title: string;
+  provider: string;
+  source_url?: string | null;
+  status: "planned" | "active" | "completed" | "paused";
+  progress: number;
+  learning_goal: string;
+  updated_at: string;
+};
+export type LearningMemory = {
+  id: string;
+  kind: "explicit" | "inferred";
+  category: string;
+  statement: string;
+  reason: string;
+  confidence: number;
+  status: "proposed" | "confirmed" | "disabled";
+  affects_authority: boolean;
 };
 export type ResearchReport = {
   id: string;
@@ -245,6 +269,8 @@ export type Bootstrap = {
   research_reports: ResearchReport[];
   opportunities: Array<Record<string, unknown>>;
   solutions: Array<Record<string, unknown>>;
+  academy_courses: AcademyCourse[];
+  learning_memory: LearningMemory[];
   activity: Activity[];
   foundation: Record<string, unknown>;
   local_model: {

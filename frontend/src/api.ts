@@ -148,10 +148,11 @@ export function requestResearch(
   projectId: string | null,
   query: string,
   purpose: "world_pulse" | "opportunity" = "world_pulse",
+  category?: string,
 ): Promise<Record<string, unknown>> {
   return request("/api/research/requests", {
     method: "POST",
-    body: JSON.stringify({ project_id: projectId, query, depth: "standard", purpose, category: purpose === "opportunity" ? "business-opportunity" : "general" }),
+    body: JSON.stringify({ project_id: projectId, query, depth: "standard", purpose, category: category ?? (purpose === "opportunity" ? "business-opportunity" : "general") }),
   });
 }
 
@@ -214,6 +215,34 @@ export function createSolution(payload: Record<string, unknown>): Promise<Record
 
 export function requestDataJob(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   return request("/api/data-lab/jobs", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function executeDataJob(approvalId: string): Promise<Record<string, unknown>> {
+  return request(`/api/data-lab/jobs/${approvalId}/execute`, { method: "POST" });
+}
+
+export function requestSolutionTransition(solutionId: string, targetStage: string, proof: string): Promise<Record<string, unknown>> {
+  return request(`/api/solutions/${solutionId}/transitions`, { method: "POST", body: JSON.stringify({ target_stage: targetStage, proof }) });
+}
+
+export function executeSolutionTransition(approvalId: string): Promise<Record<string, unknown>> {
+  return request(`/api/solutions/transitions/${approvalId}/execute`, { method: "POST" });
+}
+
+export function createAcademyCourse(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return request("/api/academy/courses", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function updateAcademyCourse(courseId: string, status: string, progress: number): Promise<Record<string, unknown>> {
+  return request(`/api/academy/courses/${courseId}`, { method: "PATCH", body: JSON.stringify({ status, progress }) });
+}
+
+export function createLearningMemory(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return request("/api/learning/memory", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function decideLearningMemory(memoryId: string, status: "confirmed" | "disabled"): Promise<Record<string, unknown>> {
+  return request(`/api/learning/memory/${memoryId}`, { method: "PATCH", body: JSON.stringify({ status }) });
 }
 
 export function transcribeVoice(blob: Blob): Promise<{ text: string; engine: string }> {

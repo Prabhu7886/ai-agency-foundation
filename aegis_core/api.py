@@ -29,6 +29,8 @@ from aegis_core.opportunity_reports import OpportunityReportService
 from aegis_core.prompt_compiler import PromptCompiler
 from aegis_core.research import WebResearchService
 from aegis_core.schemas import (
+    AcademyCourseCreate,
+    AcademyCourseUpdate,
     AgentCreate,
     ApprovalDecision,
     ChatRequest,
@@ -36,6 +38,8 @@ from aegis_core.schemas import (
     ConversationCreate,
     DataJobRequest,
     GitHubOperationRequest,
+    LearningMemoryCreate,
+    LearningMemoryDecision,
     PluginChange,
     OpportunityCreate,
     ProjectCreate,
@@ -69,7 +73,7 @@ WORKSPACES = [
     {"id": "solution-factory", "label": "Solution Factory", "description": "Turn real problems into tested solutions."},
     {"id": "approval-center", "label": "Approval Center", "description": "Review evidence before consequential action."},
     {"id": "security-sentinel", "label": "Security Sentinel", "description": "Security, code, model, and runtime integrity."},
-    {"id": "voice-lounge", "label": "Voice Lounge", "description": "Private push-to-talk collaboration."},
+    {"id": "aegis-hub", "label": "Aegis Hub", "description": "Digital identity, private conversation, and shared learning."},
     {"id": "data-lab", "label": "Data Lab", "description": "Clean, validate, and analyze without losing raw data."},
 ]
 
@@ -123,7 +127,7 @@ def create_app(
 
     app = FastAPI(
         title="Aegis Local Executive API",
-        version="0.6.0",
+        version="0.7.0",
         description="Local-first executive control plane built on the AI Agency security foundation.",
         lifespan=lifespan,
         docs_url="/api/docs" if os.getenv("AEGIS_ENABLE_API_DOCS", "false").lower() == "true" else None,
@@ -171,7 +175,7 @@ def create_app(
         codex_plugin = plugins.get("plugin-codex", {})
         local_status = await asyncio.to_thread(model_router.status)
         return {
-            "version": "0.6.0",
+            "version": "0.7.0",
             "workspaces": [item["label"] for item in WORKSPACES],
             "overview": store.overview(),
             "agents": [
@@ -203,6 +207,10 @@ def create_app(
                 "Approval-gated GitHub staging, commits, branch pushes, and draft pull requests",
                 "Encrypted SQLCipher control-plane persistence",
                 "Audited project, agent, skill, and workspace inventory",
+                "Owner-controlled Aegis Hub with local voice, Academy plans, and reviewable learning memory",
+                "Dual approval queues backed by one single-use encrypted execution ledger",
+                "World Pulse niche filtering with an internal source brief reader",
+                "Opportunity-to-Solution handoff with approval-gated evidence stages",
             ],
             "integrations": {
                 "ollama": {
@@ -237,7 +245,7 @@ def create_app(
             "status": "ok",
             "local_only": True,
             "service": "aegis",
-            "version": "0.6.0",
+            "version": "0.7.0",
             "database": "sqlcipher-required",
             "prompt_compiler": "required",
         }
@@ -285,6 +293,8 @@ def create_app(
             "research_reports": store.list_research_reports(),
             "opportunities": store.list_opportunities(),
             "solutions": store.list_solutions(),
+            "academy_courses": store.list_academy_courses(),
+            "learning_memory": store.list_learning_memory(),
             "activity": store.list_activity(),
             "foundation": guard.status(),
             "local_model": model_router.status(),
@@ -1021,6 +1031,28 @@ def create_app(
     async def speak_voice(payload: VoiceSpeakRequest) -> dict[str, Any]:
         return await asyncio.to_thread(voice.speak, payload.text)
 
+    @app.post("/api/academy/courses", dependencies=[Depends(require_session)])
+    async def create_academy_course(payload: AcademyCourseCreate) -> dict[str, Any]:
+        return store.create_academy_course(payload.model_dump())
+
+    @app.patch("/api/academy/courses/{course_id}", dependencies=[Depends(require_session)])
+    async def update_academy_course(course_id: str, payload: AcademyCourseUpdate) -> dict[str, Any]:
+        try:
+            return store.update_academy_course(course_id, payload.status, payload.progress)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/learning/memory", dependencies=[Depends(require_session)])
+    async def create_learning_memory(payload: LearningMemoryCreate) -> dict[str, Any]:
+        return store.create_learning_memory(payload.model_dump())
+
+    @app.patch("/api/learning/memory/{memory_id}", dependencies=[Depends(require_session)])
+    async def decide_learning_memory(memory_id: str, payload: LearningMemoryDecision) -> dict[str, Any]:
+        try:
+            return store.set_learning_memory_status(memory_id, payload.status)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.post("/api/opportunities", dependencies=[Depends(require_session)])
     async def create_opportunity(payload: OpportunityCreate) -> dict[str, Any]:
         return store.create_opportunity(payload.model_dump())
@@ -1039,6 +1071,7 @@ def create_app(
             summary=f"Advance {solution['title']} from {solution['stage']} to {payload.target_stage}",
             risk_level="medium",
             evidence={"solution_id": solution_id, "target_stage": payload.target_stage, "proof": payload.proof},
+            approval_queue="business_creative",
         )
 
     @app.post("/api/solutions/transitions/{approval_id}/execute", dependencies=[Depends(require_session)])

@@ -107,7 +107,9 @@ Start the FastAPI control plane and built interface on loopback only:
 python run_aegis.py
 ```
 
-Open `http://127.0.0.1:8000`. The workspace provides Executive Home, Agent Fleet, World Pulse, Opportunity Engine, Solution Factory, Approval Center, Security Sentinel, Voice Lounge, and Data Lab. Projects and tasks behave like local Codex-style workspaces; agents receive reusable skills, while plugins are controlled external capabilities.
+Open `http://127.0.0.1:8000`. The workspace provides Executive Home, AI Workspace, Agent Fleet, World Pulse, Opportunity Engine, Solution Factory, Approval Center, Security Sentinel, Aegis Hub, and Data Lab. Aegis Hub contains the owner-controlled digital identity, private local voice, Aegis Academy course plans, and a visible controlled-learning ledger. Approval Center separates Security & Operations from Business & Creative decisions while preserving one single-use audit trail.
+
+World Pulse organizes approved public research by niche and opens saved briefs in an internal reader. Opportunity Engine can hand a scored opportunity to Solution Factory, where every evidence-backed stage transition returns to Business & Creative approvals. External course-platform and social-media credentials remain disconnected until the owner explicitly approves an official integration.
 
 Every executable user request passes through the Aegis prompt compiler first. Aegis keeps the original prompt, produces a bounded execution contract, classifies data and risk, states required approvals and success evidence, and never lets rewriting expand the user's authority. If Ollama is unavailable, a conservative deterministic compiler is used. AI chat routes each turn by content: Llama handles general executive conversation, DeepSeek Coder handles implementation work, and Qwen handles research, data, and strategic analysis. A one-model-at-a-time lock unloads the previous Ollama model before switching; models above the configured VRAM cap are labeled as hybrid GPU/RAM workloads in the interface.
 

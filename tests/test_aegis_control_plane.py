@@ -87,6 +87,13 @@ def test_approval_execution_is_single_use(store: AegisStore) -> None:
     assert store.get_approval(approval["id"])["execution"]["status"] == "completed"
 
 
+def test_approval_center_uses_two_audited_queues(store: AegisStore) -> None:
+    security = store.create_approval("github_operation", "Inspect repository", "high")
+    business = store.create_approval("solution_transition", "Validate offer", "medium")
+    assert security["approval_queue"] == "security_operations"
+    assert business["approval_queue"] == "business_creative"
+
+
 def test_stale_pending_approvals_expire(store: AegisStore) -> None:
     approval = store.create_approval("stale_action", "Do not keep forever", "medium")
     with store.database.connection() as connection:
@@ -736,7 +743,25 @@ def test_opportunity_scoring_and_solution_stage_order(store: AegisStore) -> None
         "execution_risk": 30,
     })
     assert opportunity["score"] == 75.5
-    solution = store.create_solution({"title": "Audit kit", "problem": "Teams cannot verify private AI deployments safely.", "audience": "small businesses"})
+    solution = store.create_solution({"title": "Audit kit", "problem": "Teams cannot verify private AI deployments safely.", "audience": "small businesses", "opportunity_id": opportunity["id"]})
+    assert solution["opportunity_id"] == opportunity["id"]
     with pytest.raises(ValueError, match="one evidence-backed stage"):
         store.transition_solution(solution["id"], "prototype", "Skipped validation")
     assert store.transition_solution(solution["id"], "validate", "Five interviews recorded")["stage"] == "validate"
+
+
+def test_academy_and_controlled_learning_are_local_and_reviewable(store: AegisStore) -> None:
+    course = store.create_academy_course({
+        "title": "AI Product Strategy",
+        "provider": "Coursera",
+        "source_url": "https://www.coursera.org/learn/example",
+        "learning_goal": "Turn verified customer problems into scoped offers.",
+    })
+    assert course["status"] == "planned"
+    assert store.update_academy_course(course["id"], "active", 10)["progress"] == 10
+
+    explicit = store.create_learning_memory({"kind": "explicit", "category": "communication", "statement": "Lead with the executive summary."})
+    inferred = store.create_learning_memory({"kind": "inferred", "category": "workflow", "statement": "Prefer visual reviews.", "reason": "Repeated UI review requests", "confidence": 0.7})
+    assert explicit["status"] == "confirmed"
+    assert inferred["status"] == "proposed"
+    assert store.set_learning_memory_status(inferred["id"], "disabled")["status"] == "disabled"

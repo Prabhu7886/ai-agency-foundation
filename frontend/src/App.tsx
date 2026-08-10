@@ -50,6 +50,8 @@ import {
   changePlugin,
   chat,
   createAgent,
+  createAcademyCourse,
+  createLearningMemory,
   createOpportunity,
   createProject,
   createSolution,
@@ -58,8 +60,10 @@ import {
   decideApproval,
   executeCodexDeviceLogin,
   executeCodexTask,
+  executeDataJob,
   executeResearch,
   executeGitHubOperation,
+  executeSolutionTransition,
   getCodexStatus,
   getConversation,
   requestCodexDeviceLogin,
@@ -67,13 +71,16 @@ import {
   requestResearch,
   requestGitHubOperation,
   requestDataJob,
+  requestSolutionTransition,
   restoreConversation,
   runSecurityScan,
+  updateAcademyCourse,
+  decideLearningMemory,
   speakVoice,
   streamChat,
   transcribeVoice,
 } from "./api";
-import type { Agent, Approval, Bootstrap, CodexStatus, Conversation, ConversationMessage, GitHubAction, GitHubGovernance, GitHubStatus, Plugin, Project, SecurityScan, Skill, Workspace } from "./types";
+import type { Agent, Approval, Bootstrap, CodexStatus, Conversation, ConversationMessage, GitHubAction, GitHubGovernance, GitHubStatus, Plugin, Project, SecurityScan, Skill, Workspace, WorldPulseItem } from "./types";
 
 const workspaceIcons: Record<string, ReactNode> = {
   "executive-home": <CircleGauge size={17} />,
@@ -84,7 +91,7 @@ const workspaceIcons: Record<string, ReactNode> = {
   "solution-factory": <FlaskConical size={17} />,
   "approval-center": <UserRoundCheck size={17} />,
   "security-sentinel": <ShieldCheck size={17} />,
-  "voice-lounge": <AudioLines size={17} />,
+  "aegis-hub": <AudioLines size={17} />,
   "data-lab": <Database size={17} />,
 };
 
@@ -186,6 +193,12 @@ export default function App() {
       }
       if (decision === "approved" && item.action === "codex_task") {
         return executeCodexTask(item.id);
+      }
+      if (decision === "approved" && item.action === "data_lab_job") {
+        return executeDataJob(item.id);
+      }
+      if (decision === "approved" && item.action === "solution_transition") {
+        return executeSolutionTransition(item.id);
       }
       return undefined;
     }, decision === "approved" && item.action === "public_web_research"
@@ -321,15 +334,15 @@ export default function App() {
             />
           )}
           {activeWorkspace === "world-pulse" && (
-            <WorldPulse data={data} project={selectedProject} onResearch={(query) => mutate(() => requestResearch(selectedProject?.id ?? null, query), "Research request sent to Approval Center")} />
+            <WorldPulse data={data} project={selectedProject} onResearch={(query, category) => mutate(() => requestResearch(selectedProject?.id ?? null, query, "world_pulse", category), "Research request sent to Approval Center")} />
           )}
-          {activeWorkspace === "opportunity-engine" && <OpportunityEngine data={data} project={selectedProject} onResearch={(query) => mutate(() => requestResearch(selectedProject?.id ?? null, query, "opportunity"), "Opportunity research sent to Approval Center")} onCreate={(payload) => mutate(() => createOpportunity(payload), "Opportunity scored from explicit evidence")} />}
-          {activeWorkspace === "solution-factory" && <><SolutionCreateForm onCreate={(payload) => mutate(() => createSolution(payload), "Solution program created at discovery stage")} /><SolutionFactory data={data} onCreate={async () => undefined} /></>}
+          {activeWorkspace === "opportunity-engine" && <OpportunityEngine data={data} project={selectedProject} onResearch={(query) => mutate(() => requestResearch(selectedProject?.id ?? null, query, "opportunity"), "Opportunity research sent to Approval Center")} onCreate={(payload) => mutate(() => createOpportunity(payload), "Opportunity scored from explicit evidence")} onSendToFactory={(payload) => mutate(() => createSolution(payload), "Opportunity sent to Solution Factory")} />}
+          {activeWorkspace === "solution-factory" && <><SolutionCreateForm onCreate={(payload) => mutate(() => createSolution(payload), "Solution program created at discovery stage")} /><SolutionFactory data={data} onTransition={(id, stage, proof) => mutate(() => requestSolutionTransition(id, stage, proof), "Stage transition sent to Business & Creative approvals")} /></>}
           {activeWorkspace === "approval-center" && (
             <ApprovalCenter approvals={data.approvals} onDecision={decideAndExecute} />
           )}
           {activeWorkspace === "security-sentinel" && <SecuritySentinel data={data} project={selectedProject} />}
-          {activeWorkspace === "voice-lounge" && <VoiceLounge />}
+          {activeWorkspace === "aegis-hub" && <AegisHub data={data} onCreateCourse={(payload) => mutate(() => createAcademyCourse(payload), "Course added to Aegis Academy")} onUpdateCourse={(id, status, progress) => mutate(() => updateAcademyCourse(id, status, progress), "Learning progress updated")} onCreateMemory={(payload) => mutate(() => createLearningMemory(payload), "Preference saved under controlled learning")} onMemoryDecision={(id, status) => mutate(() => decideLearningMemory(id, status), "Learning preference updated")} />}
           {activeWorkspace === "data-lab" && <DataLab project={selectedProject} onRequest={(payload) => mutate(() => requestDataJob(payload), "Data cleaning plan sent to Approval Center")} />}
         </section>
       </main>
@@ -851,10 +864,40 @@ function PluginCard({ plugin, onChange }: { plugin: Plugin; onChange: () => void
   return <article className="entity-card plugin-card"><div className="entity-card__top"><div className="entity-icon plugin"><AppWindow size={20} /></div><StatusPill tone={enabled ? "safe" : plugin.status === "planned" ? "neutral" : "warning"}>{plugin.status}</StatusPill></div><h3>{plugin.name}</h3><span className="entity-subtitle">{plugin.category} · {plugin.connection_status.replaceAll("_", " ")}</span><p>{plugin.description}</p><div className="policy-line"><LockKeyhole size={13} /> {plugin.data_policy.replaceAll("_", " ")}</div><button className="plugin-action" disabled={plugin.status === "planned"} onClick={onChange}>{enabled ? "Disable" : "Request enable"}<ChevronRight size={14} /></button></article>;
 }
 
-function WorldPulse({ data, project, onResearch }: { data: Bootstrap; project: Project | null; onResearch: (query: string) => Promise<void> }) {
+function LegacyWorldPulse({ data, project, onResearch }: { data: Bootstrap; project: Project | null; onResearch: (query: string, category: string) => Promise<void> }) {
   const [query, setQuery] = useState("");
-  const submit = async (event: FormEvent) => { event.preventDefault(); if (!query.trim()) return; const value = query; setQuery(""); await onResearch(value); };
+  const niches = ["all", "ai-technology", "markets-trades", "economy-trade", "us-politics", "global-affairs", "commodities", "public-figures"];
+  const [niche, setNiche] = useState("all");
+  const [reader, setReader] = useState<WorldPulseItem | null>(null);
+  const items = niche === "all" ? data.world_pulse : data.world_pulse.filter((item) => String(item.category ?? "general").toLowerCase().replaceAll("_", "-").includes(niche) || (niche === "ai-technology" && /\b(ai|tech|software)\b/i.test(item.headline)));
+  const submit = async (event: FormEvent) => { event.preventDefault(); if (!query.trim()) return; const value = query; setQuery(""); await onResearch(value, niche === "all" ? "general" : niche); };
   return <div className="single-workspace"><div className="workspace-intro pulse-intro"><div><div className="eyebrow">GLOBAL IMPACT INTELLIGENCE</div><h2>Signal over noise.<br /><span>Every claim earns its confidence.</span></h2><p>AI, IT, economies, conflicts, trade, gold, silver, politicians, insiders, and institutional holdings.</p></div><Radar className="intro-icon" /></div><form className="research-bar" onSubmit={submit}><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Research a public topic…" /><button disabled={!query.trim()}>Request research</button></form><div className="source-policy"><ShieldCheck size={16} /><span>Public queries only. Web access requires Approval Center authorization and an approved research session.</span></div>{data.world_pulse.length === 0 ? <EmptyState icon={<Globe2 />} title="World Pulse is protected and waiting" body={`No unverified headlines are displayed. Start an approved research task${project ? ` for ${project.name}` : ""}.`} /> : <div className="card-grid">{data.world_pulse.map((item, index) => <article className="entity-card pulse-card" key={index}><div className="pulse-card__meta"><StatusPill tone={String(item.verification_state) === "single_source" ? "neutral" : "safe"}>{String(item.verification_state ?? "unverified").replaceAll("_", " ")}</StatusPill><span>{Math.round(Number(item.confidence ?? 0) * 100)}% source confidence</span></div><h3>{String(item.headline)}</h3><p>{String(item.summary)}</p>{item.source_url && <a href={String(item.source_url)} target="_blank" rel="noreferrer">{String(item.domain ?? "Open source")} <ArrowUpRight size={12} /></a>}</article>)}</div>}</div>;
+}
+
+function WorldPulse({ data, project, onResearch }: { data: Bootstrap; project: Project | null; onResearch: (query: string, category: string) => Promise<void> }) {
+  const niches = ["all", "ai-technology", "markets-trades", "economy-trade", "us-politics", "global-affairs", "commodities", "public-figures"];
+  const [query, setQuery] = useState("");
+  const [niche, setNiche] = useState("all");
+  const [reader, setReader] = useState<WorldPulseItem | null>(null);
+  const items = niche === "all" ? data.world_pulse : data.world_pulse.filter((item) => {
+    const category = String(item.category ?? "general").toLowerCase().replaceAll("_", "-");
+    return category.includes(niche) || (niche === "ai-technology" && /\b(ai|tech|software)\b/i.test(item.headline));
+  });
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const value = query.trim();
+    if (!value) return;
+    setQuery("");
+    await onResearch(value, niche === "all" ? "general" : niche);
+  };
+  return <div className="single-workspace">
+    <div className="workspace-intro pulse-intro"><div><div className="eyebrow">VERIFIED WORLD INTELLIGENCE</div><h2>Signal over noise.<br /><span>Every claim earns its confidence.</span></h2><p>AI, markets, economies, trade, politics, conflicts, commodities, and approved public figures.</p></div><Radar className="intro-icon" /></div>
+    <div className="niche-tabs">{niches.map((item) => <button key={item} className={niche === item ? "active" : ""} onClick={() => setNiche(item)}>{item.replaceAll("-", " ")}</button>)}</div>
+    <form className="research-bar" onSubmit={submit}><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Research ${niche === "all" ? "a public topic" : niche.replaceAll("-", " ")}…`} /><button disabled={!query.trim()}>Request research</button></form>
+    <div className="source-policy"><ShieldCheck size={16} /><span>Public queries only. Research requires approval; reporting, commentary, and social claims remain visibly distinct.</span></div>
+    {items.length === 0 ? <EmptyState icon={<Globe2 />} title="No verified signals in this niche" body={`Start an approved research task${project ? ` for ${project.name}` : ""}. Aegis does not fill empty space with unverified headlines.`} /> : <div className="card-grid">{items.map((item, index) => <article className="entity-card pulse-card" key={item.id ?? index}><div className="pulse-card__meta"><StatusPill tone={item.verification_state === "single_source" ? "neutral" : "safe"}>{item.verification_state.replaceAll("_", " ")}</StatusPill><span>{Math.round(item.confidence * 100)}% confidence</span></div><small>{String(item.category ?? "general").replaceAll("-", " ")} · {String(item.region ?? "Global")}</small><h3>{item.headline}</h3><p>{item.summary}</p><button className="reader-button" onClick={() => setReader(item)}>Read inside Aegis <ChevronRight size={12} /></button></article>)}</div>}
+    {reader && <div className="reader-backdrop" onMouseDown={() => setReader(null)}><aside className="pulse-reader" onMouseDown={(event) => event.stopPropagation()}><header><div><div className="eyebrow">AEGIS INTERNAL READER</div><h2>{reader.headline}</h2></div><button className="icon-button" onClick={() => setReader(null)}><X size={18} /></button></header><div className="reader-evidence"><StatusPill tone={reader.verification_state === "single_source" ? "warning" : "safe"}>{reader.verification_state.replaceAll("_", " ")}</StatusPill><span>{Math.round(reader.confidence * 100)}% source confidence</span></div><p>{reader.summary}</p><section><h3>Why it matters</h3><p>This brief is stored locally from an approved research session. Review the original before making a consequential decision.</p></section>{reader.source_url && <a className="primary-button" href={reader.source_url}>Open original in this tab <ArrowUpRight size={14} /></a>}</aside></div>}
+  </div>;
 }
 
 function OpportunityCreateForm({ onCreate }: { onCreate: (payload: Record<string, unknown>) => Promise<void> }) {
@@ -881,11 +924,12 @@ function SolutionCreateForm({ onCreate }: { onCreate: (payload: Record<string, u
   return <form className="research-bar workspace-action-form" onSubmit={submit}><FlaskConical size={18} /><input required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Solution name" /><input required minLength={20} value={problem} onChange={(event) => setProblem(event.target.value)} placeholder="Observed problem" /><input required value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="Who has this problem?" /><button>Discover</button></form>;
 }
 
-function OpportunityEngine({ data, project, onResearch, onCreate }: {
+function OpportunityEngine({ data, project, onResearch, onCreate, onSendToFactory }: {
   data: Bootstrap;
   project: Project | null;
   onResearch: (query: string) => Promise<void>;
   onCreate: (payload: Record<string, unknown>) => Promise<void>;
+  onSendToFactory: (payload: Record<string, unknown>) => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -907,17 +951,27 @@ function OpportunityEngine({ data, project, onResearch, onCreate }: {
     <section className="opportunity-section"><PanelHeader icon={<Radar size={17} />} title="Opportunity research reports" action={<StatusPill tone={reports.length ? "safe" : "neutral"}>{reports.length} ready</StatusPill>} />
       {reports.length === 0 ? <EmptyState icon={<Radar />} title="No research report yet" body="Submit a public topic, approve it in Approval Center, and Aegis will return here with a source-backed executive report." /> : <div className="research-report-list">{reports.map((item) => <article className="research-report" key={item.id}><header><div><div className="eyebrow">PUBLIC RESEARCH · {new Date(item.created_at).toLocaleString()}</div><h3>{item.report.title}</h3></div><div className="report-badges"><StatusPill tone={item.report.quality_gate === "supported_discovery" ? "safe" : "warning"}>{item.report.quality_gate?.replaceAll("_", " ") ?? "legacy quality"}</StatusPill><StatusPill tone={Number(item.report.source_metrics.verified_page_count ?? 0) > 0 ? "safe" : "warning"}>{Number(item.report.source_metrics.verified_page_count ?? 0)} full pages</StatusPill><StatusPill tone={Number(item.report.source_metrics.unresolved_claim_count ?? 0) === 0 ? "safe" : "danger"}>{Number(item.report.source_metrics.corroborated_claim_count ?? 0)} corroborated · {Number(item.report.source_metrics.unresolved_claim_count ?? 0)} conflicts</StatusPill><StatusPill tone={item.independent_domains >= 2 ? "safe" : "warning"}>{item.source_count} sources · {item.independent_domains} domains</StatusPill></div></header><section><h4>Executive Summary</h4><ul>{item.report.executive_summary.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Key findings</h4><div className="report-findings">{item.report.key_findings.map((finding, index) => <article key={`${finding.headline}-${index}`}><div><StatusPill tone={finding.confidence >= .7 ? "safe" : "neutral"}>{Math.round(finding.confidence * 100)}% confidence</StatusPill><span>{finding.source_ids.join(", ")}</span></div><h5>{finding.headline}</h5><p>{finding.evidence}</p><small>{finding.implication}</small></article>)}</div></section><details><summary>Recommendations, claim checks, caveats, and sources</summary><div className="report-detail-grid"><section><h4>Recommended next steps</h4><ol>{item.report.recommended_next_steps.map((line) => <li key={line}>{line}</li>)}</ol></section><section><h4>Claim-level checks</h4><ul>{(item.report.claim_assessments ?? []).map((claim) => <li key={claim.id}><strong>{claim.status.replaceAll("_", " ")}</strong> · {claim.claim} · {claim.source_ids.join(", ")}{claim.metric_values.length ? ` · ${claim.metric_values.join(" vs ")}` : ""}</li>)}</ul></section><section><h4>Further questions</h4><ul>{item.report.further_questions.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Caveats</h4><ul>{item.report.caveats.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Sources</h4><div className="report-sources">{item.report.sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer"><span>{source.id} · {source.domain} · {source.source_tier} · {source.freshness_state ?? "unknown date"} · {source.page_verification_state?.replaceAll("_", " ") ?? "legacy excerpt"}{source.methodology_terms?.length ? " · methodology signal" : ""}</span>{source.title}<ArrowUpRight size={12} /></a>)}</div></section></div></details></article>)}</div>}
     </section>
-    <section className="opportunity-section"><PanelHeader icon={<CircleGauge size={17} />} title="Evidence-backed scorecard" action={<StatusPill>{data.opportunities.length} scored</StatusPill>} /><details className="manual-score"><summary><Plus size={13} /> Score a researched opportunity manually</summary><OpportunityCreateForm onCreate={onCreate} /></details>{data.opportunities.length === 0 ? <EmptyState icon={<Zap />} title="No unsupported promises" body="Score an opportunity only after the research report is reviewed and customer or pricing evidence is attached." /> : <div className="card-grid">{data.opportunities.map((item, index) => <article className="entity-card" key={index}><StatusPill tone="safe">{String(item.score)} / 100</StatusPill><h3>{String(item.title)}</h3><p>{String(item.thesis)}</p><small>{String(item.allocation)}</small></article>)}</div>}</section>
+    <section className="opportunity-section"><PanelHeader icon={<CircleGauge size={17} />} title="Evidence-backed scorecard" action={<StatusPill>{data.opportunities.length} scored</StatusPill>} /><details className="manual-score"><summary><Plus size={13} /> Score a researched opportunity manually</summary><OpportunityCreateForm onCreate={onCreate} /></details>{data.opportunities.length === 0 ? <EmptyState icon={<Zap />} title="No unsupported promises" body="Score an opportunity only after the research report is reviewed and customer or pricing evidence is attached." /> : <div className="card-grid">{data.opportunities.map((item, index) => <article className="entity-card" key={index}><StatusPill tone="safe">{String(item.score)} / 100</StatusPill><h3>{String(item.title)}</h3><p>{String(item.thesis)}</p><small>{String(item.allocation)}</small><button className="plugin-action" onClick={() => void onSendToFactory({ opportunity_id: String(item.id), title: String(item.title), problem: String(item.thesis), audience: "Validated target customers" })}>Send to Solution Factory <ChevronRight size={14} /></button></article>)}</div>}</section>
   </div>;
 }
 
-function SolutionFactory({ data, onCreate }: { data: Bootstrap; onCreate: (payload: Record<string, unknown>) => Promise<void> }) {
+function LegacySolutionFactory({ data, onCreate }: { data: Bootstrap; onCreate: (payload: Record<string, unknown>) => Promise<void> }) {
   void onCreate;
   const stages = ["Discover", "Verify", "Design", "Prototype", "Test", "Launch", "Learn"];
   return <div className="single-workspace"><div className="workspace-intro"><div><div className="eyebrow">PROBLEM → PROOF</div><h2>Create solutions<br /><span>people will actually use.</span></h2><p>Start with a real pain, prove demand, build the smallest useful answer, and measure reality.</p></div><FlaskConical className="intro-icon" /></div><div className="factory-flow">{stages.map((stage, index) => <div key={stage}><span>{index + 1}</span><strong>{stage}</strong>{index < stages.length - 1 && <ChevronRight size={16} />}</div>)}</div>{data.solutions.length === 0 ? <EmptyState icon={<BrainCircuit />} title="Factory floor is clear" body="A verified problem will become the first solution program." /> : <div className="card-grid">{data.solutions.map((item, index) => <article className="entity-card" key={index}><StatusPill>{String(item.stage)}</StatusPill><h3>{String(item.title)}</h3><p>{String(item.problem)}</p><small>{String(item.audience)}</small></article>)}</div>}</div>;
 }
 
-function ApprovalCenter({ approvals, onDecision }: { approvals: Approval[]; onDecision: (item: Approval, decision: "approved" | "declined") => Promise<void> }) {
+function SolutionFactory({ data, onTransition }: { data: Bootstrap; onTransition: (id: string, stage: string, proof: string) => Promise<void> }) {
+  const stages = ["Discover", "Validate", "Prototype", "Pilot", "Scale"];
+  const nextStage = (stage: string) => ({ discover: "validate", validate: "prototype", prototype: "pilot", pilot: "scale" } as Record<string, string>)[stage];
+  return <div className="single-workspace">
+    <div className="workspace-intro"><div><div className="eyebrow">PROBLEM → PROOF</div><h2>Create solutions<br /><span>people will actually use.</span></h2><p>Opportunity Engine discovers and scores. Solution Factory validates, builds, launches, and measures under owner approval.</p></div><FlaskConical className="intro-icon" /></div>
+    <div className="factory-flow">{stages.map((stage, index) => <div key={stage}><span>{index + 1}</span><strong>{stage}</strong>{index < stages.length - 1 && <ChevronRight size={16} />}</div>)}</div>
+    {data.solutions.length === 0 ? <EmptyState icon={<BrainCircuit />} title="Factory floor is clear" body="A verified problem will become the first solution program." /> : <div className="card-grid">{data.solutions.map((item, index) => { const next = nextStage(String(item.stage)); return <article className="entity-card" key={index}><StatusPill>{String(item.stage)}</StatusPill><h3>{String(item.title)}</h3><p>{String(item.problem)}</p><small>{String(item.audience)}{item.opportunity_id ? " · linked opportunity" : ""}</small>{next && <button className="plugin-action" onClick={() => { const proof = window.prompt(`Evidence required to advance to ${next}`); if (proof && proof.trim().length >= 10) void onTransition(String(item.id), next, proof.trim()); }}>Propose {next} <ChevronRight size={14} /></button>}</article>; })}</div>}
+  </div>;
+}
+
+function LegacyApprovalCenter({ approvals, onDecision }: { approvals: Approval[]; onDecision: (item: Approval, decision: "approved" | "declined") => Promise<void> }) {
   const [runningId, setRunningId] = useState<string | null>(null);
   const pending = approvals.filter((item) => item.status === "pending");
   const decide = async (item: Approval, decision: "approved" | "declined") => {
@@ -929,6 +983,20 @@ function ApprovalCenter({ approvals, onDecision }: { approvals: Approval[]; onDe
     }
   };
   return <div className="single-workspace"><div className="workspace-intro compact"><div><div className="eyebrow">HUMAN AUTHORITY</div><h2>Nothing consequential<br /><span>happens in the dark.</span></h2></div><UserRoundCheck className="intro-icon" /></div>{pending.length === 0 ? <EmptyState icon={<Check />} title="Approval queue is clear" body="Aegis will surface evidence, risk, cost, and exact scope before asking." /> : <div className="approval-list">{pending.map((item) => <article key={item.id}><div><StatusPill tone={item.risk_level === "high" || item.risk_level === "critical" ? "danger" : "warning"}>{item.risk_level} risk</StatusPill><span>{timeAgo(item.requested_at)}</span></div><h3>{item.summary}</h3><p>Action: {item.action.replaceAll("_", " ")}</p><pre>{JSON.stringify(item.evidence, null, 2)}</pre><footer><button className="decline-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "declined")}><X size={15} /> Decline</button><button className="approve-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "approved")}>{runningId === item.id ? <Activity size={15} /> : <Check size={15} />} {runningId === item.id && item.action === "public_web_research" ? "Researching…" : runningId === item.id && item.action === "codex_device_login" ? "Starting sign-in…" : runningId === item.id ? "Executing…" : ["public_web_research", "github_operation", "codex_device_login", "codex_task"].includes(item.action) ? "Approve & run" : "Approve"}</button></footer></article>)}</div>}</div>;
+}
+
+function ApprovalCenter({ approvals, onDecision }: { approvals: Approval[]; onDecision: (item: Approval, decision: "approved" | "declined") => Promise<void> }) {
+  const [runningId, setRunningId] = useState<string | null>(null);
+  const [queue, setQueue] = useState<"security_operations" | "business_creative">("security_operations");
+  const pending = approvals.filter((item) => item.status === "pending");
+  const visible = pending.filter((item) => (item.approval_queue ?? "security_operations") === queue);
+  const decide = async (item: Approval, decision: "approved" | "declined") => { setRunningId(item.id); try { await onDecision(item, decision); } finally { setRunningId(null); } };
+  const count = (name: string) => pending.filter((item) => (item.approval_queue ?? "security_operations") === name).length;
+  return <div className="single-workspace">
+    <div className="workspace-intro compact"><div><div className="eyebrow">OWNER AUTHORITY · ONE AUDIT LEDGER</div><h2>Two queues.<br /><span>One accountable decision trail.</span></h2></div><UserRoundCheck className="intro-icon" /></div>
+    <div className="approval-queue-tabs"><button className={queue === "security_operations" ? "active" : ""} onClick={() => setQueue("security_operations")}><ShieldCheck size={15} /> Security & Operations <b>{count("security_operations")}</b></button><button className={queue === "business_creative" ? "active" : ""} onClick={() => setQueue("business_creative")}><Sparkles size={15} /> Business & Creative <b>{count("business_creative")}</b></button></div>
+    {visible.length === 0 ? <EmptyState icon={<Check />} title={`${queue === "security_operations" ? "Security & Operations" : "Business & Creative"} queue is clear`} body="Aegis will show exact scope, evidence, risk, freshness, and intended action before asking." /> : <div className="approval-list">{visible.map((item) => <article key={item.id}><div><StatusPill tone={item.risk_level === "high" || item.risk_level === "critical" ? "danger" : "warning"}>{item.risk_level} risk</StatusPill><span>{timeAgo(item.requested_at)}</span></div><h3>{item.summary}</h3><p>Action: {item.action.replaceAll("_", " ")}</p><pre>{JSON.stringify(item.evidence, null, 2)}</pre><footer><button className="decline-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "declined")}><X size={15} /> Decline</button><button className="approve-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "approved")}>{runningId === item.id ? <Activity size={15} /> : <Check size={15} />} {runningId === item.id ? "Executing…" : ["public_web_research", "github_operation", "codex_device_login", "codex_task", "data_lab_job", "solution_transition"].includes(item.action) ? "Approve & run" : "Approve"}</button></footer></article>)}</div>}
+  </div>;
 }
 
 function SecuritySentinel({ data, project }: { data: Bootstrap; project: Project | null }) {
@@ -973,7 +1041,7 @@ function SecuritySentinel({ data, project }: { data: Bootstrap; project: Project
   </div>;
 }
 
-function VoiceLounge() {
+function PrivateVoiceSession() {
   const [recording, setRecording] = useState(false);
   const [message, setMessage] = useState("Push to talk when you're ready.");
   const recorder = useRef<MediaRecorder | null>(null);
@@ -999,6 +1067,28 @@ function VoiceLounge() {
     } catch { setMessage("Microphone permission was not granted."); }
   };
   return <div className="voice-workspace"><div className={`voice-orb ${recording ? "recording" : ""}`}><button onClick={() => void toggle()}>{recording ? <Square /> : <Mic />}</button><i /><i /><i /></div><div className="eyebrow">PRIVATE PUSH-TO-TALK</div><h2>{message}</h2><p>Audio goes only to the loopback Aegis API. Temporary recordings are deleted after local transcription; no cloud speech service is used.</p><StatusPill tone="safe"><LockKeyhole size={12} /> Local audio policy</StatusPill></div>;
+}
+
+function AegisHub({ data, onCreateCourse, onUpdateCourse, onCreateMemory, onMemoryDecision }: {
+  data: Bootstrap;
+  onCreateCourse: (payload: Record<string, unknown>) => Promise<void>;
+  onUpdateCourse: (id: string, status: string, progress: number) => Promise<void>;
+  onCreateMemory: (payload: Record<string, unknown>) => Promise<void>;
+  onMemoryDecision: (id: string, status: "confirmed" | "disabled") => Promise<void>;
+}) {
+  const [tab, setTab] = useState<"identity" | "academy" | "voice" | "learning">("identity");
+  const [course, setCourse] = useState({ title: "", provider: "Coursera", source_url: "", learning_goal: "" });
+  const [preference, setPreference] = useState("");
+  const submitCourse = async (event: FormEvent) => { event.preventDefault(); await onCreateCourse(course); setCourse({ title: "", provider: "Coursera", source_url: "", learning_goal: "" }); };
+  const submitPreference = async (event: FormEvent) => { event.preventDefault(); if (!preference.trim()) return; await onCreateMemory({ kind: "explicit", category: "communication", statement: preference.trim(), reason: "Owner-supplied preference", confidence: 1, affects_authority: false }); setPreference(""); };
+  return <div className="single-workspace hub-workspace">
+    <div className="hub-hero"><img src="/aegis-avatar.png" alt="Aegis digital avatar" /><div><div className="eyebrow">OWNER-CONTROLLED DIGITAL PARTNER</div><h2>Aegis Hub</h2><p>Your always-digital executive partner for business conversation, private voice, shared courses, and transparent learning. Aegis can propose; you retain authority.</p><div className="chip-row"><span>Always digital</span><span>Local first</span><span>No silent retraining</span></div></div></div>
+    <div className="segmented-tabs hub-tabs">{(["identity", "academy", "voice", "learning"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</div>
+    {tab === "identity" && <div className="hub-grid"><section className="panel"><PanelHeader icon={<Sparkles size={17} />} title="Digital identity" action={<StatusPill tone="safe">Owner controlled</StatusPill>} /><p>Professional, friendly, direct, factual, ambitious, and evidence-aware. Aegis never presents itself as human and never expands its own permissions.</p></section><section className="panel"><PanelHeader icon={<ShieldCheck size={17} />} title="Authority boundary" /><ul><li>Low-risk analysis and local organization may run directly.</li><li>External, sensitive, financial, publishing, and system-changing work requires approval.</li><li>Learning that changes authority is proposal-only and must pass evaluation.</li></ul></section></div>}
+    {tab === "academy" && <div className="academy-layout"><form className="panel academy-form" onSubmit={submitCourse}><PanelHeader icon={<BrainCircuit size={17} />} title="Add a learning path" /><label>Course title<input required value={course.title} onChange={(event) => setCourse({ ...course, title: event.target.value })} placeholder="Course or subject" /></label><label>Provider<input required value={course.provider} onChange={(event) => setCourse({ ...course, provider: event.target.value })} placeholder="Coursera, edX, YouTube…" /></label><label>Public course link <span>optional</span><input value={course.source_url} onChange={(event) => setCourse({ ...course, source_url: event.target.value })} placeholder="Official or permitted course URL" /></label><label>Learning goal<textarea value={course.learning_goal} onChange={(event) => setCourse({ ...course, learning_goal: event.target.value })} placeholder="What should we be able to do after this?" /></label><button className="primary-button">Add to Academy</button><small>Credentials are not connected. Aegis stores only the course plan and public link until you approve an official integration.</small></form><section><div className="learning-cycle">Learn → Practice → Evaluate → Propose skill update → Approve → Release</div>{data.academy_courses.length === 0 ? <EmptyState icon={<BrainCircuit />} title="Academy is ready" body="Add a course and learn it with Aegis through notes, exercises, business applications, and review." /> : <div className="course-list">{data.academy_courses.map((item) => <article className="entity-card" key={item.id}><div className="entity-card__top"><StatusPill tone={item.status === "completed" ? "safe" : "neutral"}>{item.status}</StatusPill><span>{Math.round(item.progress)}%</span></div><h3>{item.title}</h3><p>{item.provider} · {item.learning_goal || "Goal not set"}</p><div className="progress-track"><i style={{ width: `${item.progress}%` }} /></div><footer>{item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">Official course <ArrowUpRight size={12} /></a> : <span>Local plan</span>}<button onClick={() => void onUpdateCourse(item.id, item.progress >= 100 ? "completed" : "active", Math.min(100, item.progress + 10))}>+10%</button></footer></article>)}</div>}</section></div>}
+    {tab === "voice" && <PrivateVoiceSession />}
+    {tab === "learning" && <div className="learning-control"><form className="panel" onSubmit={submitPreference}><PanelHeader icon={<BrainCircuit size={17} />} title="Teach Aegis explicitly" /><p>Save a non-sensitive preference. Explicit presentation preferences apply directly; inferred or authority-changing changes remain proposals.</p><textarea value={preference} onChange={(event) => setPreference(event.target.value)} placeholder="Example: Give me a concise executive summary before technical detail." /><button className="primary-button" disabled={!preference.trim()}>Save preference</button></form><section className="memory-list">{data.learning_memory.length === 0 ? <EmptyState icon={<BrainCircuit />} title="No learned preferences yet" body="Aegis will keep each preference visible, editable, disableable, and attributable." /> : data.learning_memory.map((item) => <article className="entity-card" key={item.id}><div className="entity-card__top"><StatusPill tone={item.status === "confirmed" ? "safe" : item.status === "disabled" ? "neutral" : "warning"}>{item.status}</StatusPill><span>{item.kind} · {Math.round(item.confidence * 100)}%</span></div><h3>{item.category}</h3><p>{item.statement}</p><small>{item.reason}</small>{item.status === "proposed" && <footer><button onClick={() => void onMemoryDecision(item.id, "disabled")}>Disable</button><button onClick={() => void onMemoryDecision(item.id, "confirmed")}>Confirm</button></footer>}</article>)}</section></div>}
+  </div>;
 }
 
 function DataLab({ project, onRequest }: { project: Project | null; onRequest: (payload: Record<string, unknown>) => Promise<void> }) {
