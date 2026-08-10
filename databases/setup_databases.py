@@ -288,6 +288,21 @@ CREATE TABLE IF NOT EXISTS aegis_world_pulse_sources (
 );
 CREATE INDEX IF NOT EXISTS idx_aegis_pulse_sources ON aegis_world_pulse_sources(pulse_id, domain);
 
+CREATE TABLE IF NOT EXISTS aegis_research_reports (
+    id TEXT PRIMARY KEY,
+    project_id TEXT REFERENCES aegis_projects(id) ON DELETE SET NULL,
+    purpose TEXT NOT NULL CHECK(purpose IN ('world_pulse', 'opportunity')),
+    query TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'completed' CHECK(status IN ('completed', 'failed')),
+    source_count INTEGER NOT NULL DEFAULT 0 CHECK(source_count >= 0),
+    independent_domains INTEGER NOT NULL DEFAULT 0 CHECK(independent_domains >= 0),
+    report_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_research_reports_project
+ON aegis_research_reports(project_id, created_at);
+
 CREATE TABLE IF NOT EXISTS aegis_opportunities (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -415,6 +430,7 @@ class DatabaseSetup:
             "aegis_approval_executions",
             "aegis_world_pulse",
             "aegis_world_pulse_sources",
+            "aegis_research_reports",
             "aegis_opportunities",
             "aegis_solutions",
             "aegis_activity",

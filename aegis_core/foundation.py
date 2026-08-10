@@ -58,6 +58,12 @@ class FoundationGuard:
             raise FoundationViolation("Sensitive or client data is prohibited in public research queries")
         return clean
 
+    def approved_public_research_enabled(self) -> bool:
+        # Older protected runtime configurations predate this explicit flag.
+        # Preserve the approved-session workflow during migration; research still
+        # requires a sanitized query and a consumed, single-use approval record.
+        return bool(self.security.get("data_handling", {}).get("approved_public_research_sessions", True))
+
     def allowed_project_roots(self) -> list[Path]:
         configured = [item.strip() for item in os.getenv("AEGIS_PROJECT_ROOTS", "").split(";") if item.strip()]
         roots = [Path(item).expanduser().resolve() for item in configured]
@@ -97,7 +103,13 @@ class FoundationGuard:
             "local_only": True,
             "api_bind": "127.0.0.1",
             "offline_mode": offline,
-            "external_research": "approval_required" if offline else "approved_session_only",
+            "external_research": (
+                "approved_public_sessions"
+                if self.approved_public_research_enabled()
+                else "blocked_offline"
+                if offline
+                else "approved_session_only"
+            ),
             "sqlcipher_required": bool(self.security.get("encryption", {}).get("sqlcipher_required", True)),
             "vector_store_mode": vector.get("mode", "embedded_only"),
             "chroma_server_enabled": bool(vector.get("server_enabled", False)),

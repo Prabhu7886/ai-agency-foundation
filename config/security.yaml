@@ -55,6 +55,7 @@ data_handling:
   external_client_data_allowed: false
   redact_secrets_in_logs: true
   temporary_plaintext_cleanup_minutes: 15
+  approved_public_research_sessions: true
   permitted_external_schemes:
     - https
   permitted_research_domains:

@@ -21,6 +21,7 @@ from aegis_core.codex_adapter import CodexAppServerAdapter
 from aegis_core.data_lab import DataLabService
 from aegis_core.github_adapter import GitHubAdapter
 from aegis_core.model_gateway import LocalModelGateway
+from aegis_core.opportunity_reports import OpportunityReportService
 from aegis_core.prompt_compiler import PromptCompiler
 from aegis_core.research import WebResearchService
 from aegis_core.schemas import (
@@ -96,6 +97,7 @@ def create_app(
     github = GitHubAdapter(guard)
     codex = CodexAppServerAdapter(guard)
     world_pulse = WorldPulseService(store)
+    opportunity_reports = OpportunityReportService()
     data_lab = DataLabService(guard)
     voice = LocalVoiceService()
     session_token = secrets.token_urlsafe(32)
@@ -111,7 +113,7 @@ def create_app(
 
     app = FastAPI(
         title="Aegis Local Executive API",
-        version="0.1.0",
+        version="0.3.0",
         description="Local-first executive control plane built on the AI Agency security foundation.",
         lifespan=lifespan,
         docs_url="/api/docs" if os.getenv("AEGIS_ENABLE_API_DOCS", "false").lower() == "true" else None,
@@ -158,7 +160,7 @@ def create_app(
             "status": "ok",
             "local_only": True,
             "service": "aegis",
-            "version": "0.2.0",
+            "version": "0.3.0",
             "database": "sqlcipher-required",
             "prompt_compiler": "required",
         }
@@ -192,6 +194,7 @@ def create_app(
             "plugins": store.list_plugins(),
             "approvals": store.list_approvals(),
             "world_pulse": store.list_world_pulse(),
+            "research_reports": store.list_research_reports(),
             "opportunities": store.list_opportunities(),
             "solutions": store.list_solutions(),
             "activity": store.list_activity(),
@@ -393,7 +396,7 @@ def create_app(
             github_status = await asyncio.to_thread(github.status, project)
             codex_status = await asyncio.to_thread(codex.status, True)
             runtime_context = {
-                "version": "0.2.0",
+                "version": "0.3.0",
                 "workspaces": [item["label"] for item in WORKSPACES],
                 "overview": store.overview(),
                 "agents": [
@@ -508,6 +511,7 @@ def create_app(
                 "depth": payload.depth,
                 "category": payload.category,
                 "regions": payload.regions,
+                "purpose": payload.purpose,
                 "private_data_blocked": True,
             },
         )
@@ -517,12 +521,34 @@ def create_app(
     async def execute_research(approval_id: str) -> dict[str, Any]:
         approval = claim_approved_action(approval_id, "public_web_research")
         evidence = approval.get("evidence", {})
+        task_id = approval.get("task_id")
+        if task_id:
+            try:
+                store.update_task(task_id, "running", "Approved public research session started")
+            except Exception as exc:
+                fail_approved_action(approval_id, exc)
+                raise
+
+        def fail_task(exc: Exception) -> None:
+            if task_id:
+                try:
+                    store.update_task(task_id, "failed", str(exc)[:2000])
+                except Exception:
+                    pass
+
         try:
-            result = await asyncio.to_thread(research.search, evidence.get("query", ""), evidence.get("depth", "standard"))
+            result = await asyncio.to_thread(
+                research.search,
+                evidence.get("query", ""),
+                evidence.get("depth", "standard"),
+                approved_session=True,
+            )
         except FoundationViolation as exc:
+            fail_task(exc)
             fail_approved_action(approval_id, exc)
             raise
         except Exception as exc:
+            fail_task(exc)
             fail_approved_action(approval_id, exc)
             raise HTTPException(status_code=502, detail=f"Research provider failed: {str(exc)[:500]}") from exc
         try:
@@ -531,17 +557,36 @@ def create_app(
                 str(evidence.get("category", "general")),
                 [str(item) for item in evidence.get("regions", ["Global"])],
             )
+            research_report = None
+            if evidence.get("purpose") == "opportunity":
+                report_payload = opportunity_reports.build(
+                    str(evidence.get("query", "")),
+                    result,
+                    pulse_result["signals"],
+                )
+                research_report = store.create_research_report(
+                    project_id=approval.get("project_id"),
+                    purpose="opportunity",
+                    query=str(evidence.get("query", "")),
+                    report=report_payload,
+                )
             if approval.get("task_id"):
                 store.update_task(
                     approval["task_id"],
                     "completed",
-                    f"Collected {result['source_count']} public sources and accepted {pulse_result['accepted']} traceable signals",
+                    f"Collected {result['source_count']} public sources, accepted {pulse_result['accepted']} traceable signals"
+                    + (", and created an opportunity report" if research_report else ""),
                 )
         except Exception as exc:
+            fail_task(exc)
             fail_approved_action(approval_id, exc)
             raise
-        complete_approved_action(approval_id, f"Accepted {pulse_result['accepted']} World Pulse signals")
-        return {**result, "world_pulse": pulse_result}
+        complete_approved_action(
+            approval_id,
+            f"Accepted {pulse_result['accepted']} World Pulse signals"
+            + (" and created an opportunity report" if research_report else ""),
+        )
+        return {**result, "world_pulse": pulse_result, "research_report": research_report}
 
     @app.get("/api/security/foundation", dependencies=[Depends(require_session)])
     async def foundation_status() -> dict[str, Any]:

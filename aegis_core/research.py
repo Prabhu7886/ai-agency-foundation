@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 from aegis_core.foundation import FoundationGuard, FoundationViolation
 from utils.logger import get_logger
@@ -23,11 +23,13 @@ class WebResearchService:
         self.guard = guard
         self.logger = get_logger("aegis_web_research")
 
-    def search(self, query: str, depth: str) -> dict[str, Any]:
+    def search(self, query: str, depth: str, *, approved_session: bool = False) -> dict[str, Any]:
         clean = self.guard.sanitize_public_query(query)
-        if os.getenv("AI_AGENCY_OFFLINE_MODE", "true").lower() == "true":
+        offline = os.getenv("AI_AGENCY_OFFLINE_MODE", "true").lower() == "true"
+        approved_exception = approved_session and self.guard.approved_public_research_enabled()
+        if offline and not approved_exception:
             raise FoundationViolation(
-                "Foundation offline mode is active. Set AI_AGENCY_OFFLINE_MODE=false for the approved research session and restart Aegis."
+                "Foundation offline mode is active and no approved public-research session was supplied."
             )
         limit = self.LIMITS[depth]
         self.logger.outbound_event("https://duckduckgo.com", f"approved public research: {clean}", True, False)
@@ -42,6 +44,8 @@ class WebResearchService:
                         "published_at": str(item.get("date", ""))[:100] or None,
                     }
                 )
+        if not findings:
+            raise RuntimeError("The public search provider returned no usable results; no report was created.")
         domains = Counter(urlparse(item["url"]).netloc for item in findings if item["url"])
         return {
             "query": clean,

@@ -91,6 +91,30 @@ export type WorldPulseItem = {
   confidence: number;
   verification_state: string;
 };
+export type ResearchReport = {
+  id: string;
+  project_id?: string | null;
+  purpose: "world_pulse" | "opportunity";
+  query: string;
+  title: string;
+  status: string;
+  source_count: number;
+  independent_domains: number;
+  created_at: string;
+  report: {
+    title: string;
+    generated_at: string;
+    classification: string;
+    decision_state: string;
+    executive_summary: string[];
+    key_findings: Array<{ headline: string; evidence: string; source_ids: string[]; confidence: number; implication: string }>;
+    recommended_next_steps: string[];
+    further_questions: string[];
+    caveats: string[];
+    source_metrics: Record<string, unknown>;
+    sources: Array<{ id: string; title: string; url: string; domain: string; source_tier: string; verification_state: string; confidence: number }>;
+  };
+};
 export type Bootstrap = {
   brand: { name: string; descriptor: string; motto: string; creed: string };
   workspaces: Workspace[];
@@ -107,6 +131,7 @@ export type Bootstrap = {
   plugins: Plugin[];
   approvals: Approval[];
   world_pulse: WorldPulseItem[];
+  research_reports: ResearchReport[];
   opportunities: Array<Record<string, unknown>>;
   solutions: Array<Record<string, unknown>>;
   activity: Activity[];

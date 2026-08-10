@@ -36,6 +36,7 @@ class AegisStore:
         self.database.setup_sqlcipher()
         self._seed_registry()
         self.expire_stale_approvals()
+        self.remove_invalid_empty_research_reports()
 
     @staticmethod
     def _decode(value: Any, default: Any) -> Any:
@@ -83,7 +84,7 @@ class AegisStore:
             ("plugin-github", "GitHub", "engineering", "External source control, checks, branches, and draft pull requests.", "available", "not_connected", 1, "registered_projects_only", ["repositories", "branches", "pull-requests", "checks"]),
             ("plugin-codex", "Codex", "engineering", "Escalation specialist for difficult engineering and independent review.", "available", "not_connected", 1, "redacted_or_approved", ["coding", "review", "tests"]),
             ("plugin-gemini", "Gemini", "intelligence", "Optional cloud specialist for approved research and model improvement tasks.", "available", "not_connected", 1, "redacted_or_approved", ["analysis", "multimodal", "research"]),
-            ("plugin-web", "Web Research", "research", "Approved public-source search and website analysis.", "disabled", "approval_required", 1, "public_queries_only", ["search", "website-analysis", "citations"]),
+            ("plugin-web", "Web Research", "research", "Approved public-source search and website analysis.", "enabled", "approval_gated", 1, "public_queries_only", ["search", "website-analysis", "citations"]),
             ("plugin-voice", "Local Voice", "experience", "Push-to-talk conversation through a future local transcription engine.", "planned", "not_connected", 1, "local_audio_only", ["record", "transcribe", "speak"]),
         ]
         with self.database.connection() as connection:
@@ -127,6 +128,16 @@ class AegisStore:
                     "INSERT OR IGNORE INTO aegis_agent_skills (agent_id, skill_id, assigned_at) VALUES (?, ?, ?)",
                     ("agent-engineering", skill_id, now),
                 )
+            connection.execute(
+                """UPDATE aegis_plugin_registry
+                SET status = 'enabled', connection_status = 'approval_gated', updated_at = ?
+                WHERE id = 'plugin-web'""",
+                (now,),
+            )
+            connection.execute(
+                "UPDATE aegis_skill_registry SET status = 'testing', updated_at = ? WHERE id = 'skill-web-research'",
+                (now,),
+            )
 
     def ensure_foundation_project(self, root: Path, repository_url: str) -> dict[str, Any]:
         existing = self.get_project("project-foundation")
@@ -682,6 +693,75 @@ class AegisStore:
             )
             self._activity(connection, "world_pulse_ingested", f"World Pulse signal: {headline[:180]}", "pulse", pulse_id)
         return next(item for item in self.list_world_pulse() if item["id"] == pulse_id)
+
+    def list_research_reports(self, project_id: str | None = None) -> list[dict[str, Any]]:
+        with self.database.connection() as connection:
+            if project_id:
+                rows = self._rows(
+                    connection.execute(
+                        "SELECT * FROM aegis_research_reports WHERE project_id = ? ORDER BY created_at DESC",
+                        (project_id,),
+                    )
+                )
+            else:
+                rows = self._rows(connection.execute("SELECT * FROM aegis_research_reports ORDER BY created_at DESC"))
+        for row in rows:
+            row["report"] = self._decode(row.pop("report_json"), {})
+        return rows
+
+    def create_research_report(
+        self,
+        *,
+        project_id: str | None,
+        purpose: str,
+        query: str,
+        report: dict[str, Any],
+    ) -> dict[str, Any]:
+        if purpose not in {"world_pulse", "opportunity"}:
+            raise ValueError("Unsupported research report purpose")
+        report_id = new_id("research-report")
+        now = utc_now()
+        metrics = report.get("source_metrics", {})
+        source_count = int(metrics.get("source_count", 0))
+        if source_count < 1:
+            raise ValueError("A research report requires at least one accepted source")
+        with self.database.connection() as connection:
+            connection.execute(
+                """INSERT INTO aegis_research_reports
+                (id, project_id, purpose, query, title, status, source_count, independent_domains, report_json, created_at)
+                VALUES (?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?)""",
+                (
+                    report_id,
+                    project_id,
+                    purpose,
+                    query,
+                    str(report.get("title", f"Research: {query}"))[:500],
+                    source_count,
+                    int(metrics.get("independent_domains", 0)),
+                    json.dumps(report),
+                    now,
+                ),
+            )
+            self._activity(connection, "research_report_created", f"Created {purpose} research report: {query[:180]}", "research_report", report_id)
+        return next(item for item in self.list_research_reports() if item["id"] == report_id)
+
+    def remove_invalid_empty_research_reports(self) -> int:
+        """Remove report artifacts that could not have contained source evidence."""
+        with self.database.connection() as connection:
+            invalid = self._rows(
+                connection.execute("SELECT id FROM aegis_research_reports WHERE source_count = 0")
+            )
+            if invalid:
+                connection.execute("DELETE FROM aegis_research_reports WHERE source_count = 0")
+                for item in invalid:
+                    self._activity(
+                        connection,
+                        "invalid_research_report_removed",
+                        "Removed an empty research report that had no usable source evidence",
+                        "research_report",
+                        item["id"],
+                    )
+        return len(invalid)
 
     def list_opportunities(self) -> list[dict[str, Any]]:
         with self.database.connection() as connection:

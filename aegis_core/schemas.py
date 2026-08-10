@@ -81,6 +81,7 @@ class ResearchRequest(BaseModel):
     depth: Literal["quick", "standard", "deep"] = "standard"
     category: str = Field(default="general", min_length=2, max_length=80)
     regions: list[str] = Field(default_factory=lambda: ["Global"], max_length=20)
+    purpose: Literal["world_pulse", "opportunity"] = "world_pulse"
 
 
 class PluginChange(BaseModel):

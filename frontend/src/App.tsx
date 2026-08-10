@@ -51,6 +51,7 @@ import {
   createSolution,
   createSkill,
   decideApproval,
+  executeResearch,
   requestResearch,
   requestDataJob,
   speakVoice,
@@ -154,12 +155,22 @@ export default function App() {
       await operation();
       setToast(success);
       setCreateMode(null);
-      await refresh(true);
     } catch (reason) {
       setToast(reason instanceof Error ? reason.message : "Action failed");
     } finally {
+      await refresh(true);
       setBusy(false);
     }
+  };
+
+  const decideAndExecute = async (item: Approval, decision: "approved" | "declined") => {
+    await mutate(async () => {
+      await decideApproval(item.id, decision);
+      if (decision === "approved" && item.action === "public_web_research") {
+        return executeResearch(item.id);
+      }
+      return undefined;
+    }, decision === "approved" && item.action === "public_web_research" ? "Research completed and report saved" : `Approval ${decision}`);
   };
 
   if (loading) {
@@ -273,10 +284,10 @@ export default function App() {
           {activeWorkspace === "world-pulse" && (
             <WorldPulse data={data} project={selectedProject} onResearch={(query) => mutate(() => requestResearch(selectedProject?.id ?? null, query), "Research request sent to Approval Center")} />
           )}
-          {activeWorkspace === "opportunity-engine" && <><OpportunityCreateForm onCreate={(payload) => mutate(() => createOpportunity(payload), "Opportunity scored from explicit evidence")} /><OpportunityEngine data={data} onCreate={async () => undefined} /></>}
+          {activeWorkspace === "opportunity-engine" && <OpportunityEngine data={data} project={selectedProject} onResearch={(query) => mutate(() => requestResearch(selectedProject?.id ?? null, query, "opportunity"), "Opportunity research sent to Approval Center")} onCreate={(payload) => mutate(() => createOpportunity(payload), "Opportunity scored from explicit evidence")} />}
           {activeWorkspace === "solution-factory" && <><SolutionCreateForm onCreate={(payload) => mutate(() => createSolution(payload), "Solution program created at discovery stage")} /><SolutionFactory data={data} onCreate={async () => undefined} /></>}
           {activeWorkspace === "approval-center" && (
-            <ApprovalCenter approvals={data.approvals} onDecision={(item, decision) => mutate(() => decideApproval(item.id, decision), `Approval ${decision}`)} />
+            <ApprovalCenter approvals={data.approvals} onDecision={decideAndExecute} />
           )}
           {activeWorkspace === "security-sentinel" && <SecuritySentinel data={data} />}
           {activeWorkspace === "voice-lounge" && <VoiceLounge />}
@@ -550,9 +561,34 @@ function SolutionCreateForm({ onCreate }: { onCreate: (payload: Record<string, u
   return <form className="research-bar workspace-action-form" onSubmit={submit}><FlaskConical size={18} /><input required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Solution name" /><input required minLength={20} value={problem} onChange={(event) => setProblem(event.target.value)} placeholder="Observed problem" /><input required value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="Who has this problem?" /><button>Discover</button></form>;
 }
 
-function OpportunityEngine({ data, onCreate }: { data: Bootstrap; onCreate: (payload: Record<string, unknown>) => Promise<void> }) {
-  void onCreate;
-  return <div className="single-workspace"><div className="workspace-intro"><div><div className="eyebrow">CAPITAL DISCIPLINE</div><h2>Compound first.<br /><span>Explore intelligently.</span></h2><p>Every opportunity is scored by evidence, revenue potential, fit, speed, and execution risk.</p></div><Target className="intro-icon" /></div><div className="allocation-panel"><div className="allocation-ring"><span><strong>80 / 20</strong><small>allocation</small></span></div><div><h3>Existing businesses</h3><div className="allocation-bar"><i style={{ width: "80%" }} /></div><p>80% improves and monetizes what we already own.</p><h3>Exploration</h3><div className="allocation-bar exploration"><i style={{ width: "20%" }} /></div><p>20% tests new AI opportunities with strict stop criteria.</p></div></div>{data.opportunities.length === 0 ? <EmptyState icon={<Zap />} title="No unsupported promises" body="Opportunities appear only after evidence is collected and scored." /> : <div className="card-grid">{data.opportunities.map((item, index) => <article className="entity-card" key={index}><StatusPill tone="safe">{String(item.score)} / 100</StatusPill><h3>{String(item.title)}</h3><p>{String(item.thesis)}</p><small>{String(item.allocation)}</small></article>)}</div>}</div>;
+function OpportunityEngine({ data, project, onResearch, onCreate }: {
+  data: Bootstrap;
+  project: Project | null;
+  onResearch: (query: string) => Promise<void>;
+  onCreate: (payload: Record<string, unknown>) => Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const reports = data.research_reports.filter((item) => item.purpose === "opportunity" && (!project || item.project_id === project.id));
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const value = query.trim();
+    if (!value || submitting) return;
+    setSubmitting(true);
+    await onResearch(value);
+    setQuery("");
+    setSubmitting(false);
+  };
+  return <div className="single-workspace opportunity-workspace">
+    <div className="workspace-intro"><div><div className="eyebrow">CAPITAL DISCIPLINE</div><h2>Research first.<br /><span>Invest after evidence.</span></h2><p>Aegis collects approved public evidence, labels source quality, writes an executive report, and only then lets an idea enter the scorecard.</p></div><Target className="intro-icon" /></div>
+    <form className="research-bar opportunity-research" onSubmit={submit}><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Research a market, customer problem, or AI business opportunity…" /><button disabled={!query.trim() || submitting}>{submitting ? "Requesting…" : "Research opportunity"}</button></form>
+    <div className="source-policy"><ShieldCheck size={16} /><span>Public sources only. Each run requires approval, blocks private/client data, records citations, and produces an encrypted local report.</span></div>
+    <div className="opportunity-summary-grid"><div className="allocation-panel"><div className="allocation-ring"><span><strong>80 / 20</strong><small>allocation</small></span></div><div><h3>Existing businesses</h3><div className="allocation-bar"><i style={{ width: "80%" }} /></div><p>80% improves and monetizes what we already own.</p><h3>Exploration</h3><div className="allocation-bar exploration"><i style={{ width: "20%" }} /></div><p>20% tests new AI opportunities with strict stop criteria.</p></div></div><div className="opportunity-metrics"><article><strong>{reports.length}</strong><span>Research reports</span></article><article><strong>{data.opportunities.length}</strong><span>Scored opportunities</span></article><article><strong>{reports.reduce((total, item) => total + item.source_count, 0)}</strong><span>Accepted sources</span></article></div></div>
+    <section className="opportunity-section"><PanelHeader icon={<Radar size={17} />} title="Opportunity research reports" action={<StatusPill tone={reports.length ? "safe" : "neutral"}>{reports.length} ready</StatusPill>} />
+      {reports.length === 0 ? <EmptyState icon={<Radar />} title="No research report yet" body="Submit a public topic, approve it in Approval Center, and Aegis will return here with a source-backed executive report." /> : <div className="research-report-list">{reports.map((item) => <article className="research-report" key={item.id}><header><div><div className="eyebrow">PUBLIC RESEARCH · {new Date(item.created_at).toLocaleString()}</div><h3>{item.report.title}</h3></div><StatusPill tone={item.independent_domains >= 2 ? "safe" : "warning"}>{item.source_count} sources · {item.independent_domains} domains</StatusPill></header><section><h4>Executive Summary</h4><ul>{item.report.executive_summary.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Key findings</h4><div className="report-findings">{item.report.key_findings.map((finding, index) => <article key={`${finding.headline}-${index}`}><div><StatusPill tone={finding.confidence >= .7 ? "safe" : "neutral"}>{Math.round(finding.confidence * 100)}% confidence</StatusPill><span>{finding.source_ids.join(", ")}</span></div><h5>{finding.headline}</h5><p>{finding.evidence}</p><small>{finding.implication}</small></article>)}</div></section><details><summary>Recommendations, questions, caveats, and sources</summary><div className="report-detail-grid"><section><h4>Recommended next steps</h4><ol>{item.report.recommended_next_steps.map((line) => <li key={line}>{line}</li>)}</ol></section><section><h4>Further questions</h4><ul>{item.report.further_questions.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Caveats</h4><ul>{item.report.caveats.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Sources</h4><div className="report-sources">{item.report.sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer"><span>{source.id} · {source.domain}</span>{source.title}<ArrowUpRight size={12} /></a>)}</div></section></div></details></article>)}</div>}
+    </section>
+    <section className="opportunity-section"><PanelHeader icon={<CircleGauge size={17} />} title="Evidence-backed scorecard" action={<StatusPill>{data.opportunities.length} scored</StatusPill>} /><details className="manual-score"><summary><Plus size={13} /> Score a researched opportunity manually</summary><OpportunityCreateForm onCreate={onCreate} /></details>{data.opportunities.length === 0 ? <EmptyState icon={<Zap />} title="No unsupported promises" body="Score an opportunity only after the research report is reviewed and customer or pricing evidence is attached." /> : <div className="card-grid">{data.opportunities.map((item, index) => <article className="entity-card" key={index}><StatusPill tone="safe">{String(item.score)} / 100</StatusPill><h3>{String(item.title)}</h3><p>{String(item.thesis)}</p><small>{String(item.allocation)}</small></article>)}</div>}</section>
+  </div>;
 }
 
 function SolutionFactory({ data, onCreate }: { data: Bootstrap; onCreate: (payload: Record<string, unknown>) => Promise<void> }) {
@@ -561,9 +597,18 @@ function SolutionFactory({ data, onCreate }: { data: Bootstrap; onCreate: (paylo
   return <div className="single-workspace"><div className="workspace-intro"><div><div className="eyebrow">PROBLEM → PROOF</div><h2>Create solutions<br /><span>people will actually use.</span></h2><p>Start with a real pain, prove demand, build the smallest useful answer, and measure reality.</p></div><FlaskConical className="intro-icon" /></div><div className="factory-flow">{stages.map((stage, index) => <div key={stage}><span>{index + 1}</span><strong>{stage}</strong>{index < stages.length - 1 && <ChevronRight size={16} />}</div>)}</div>{data.solutions.length === 0 ? <EmptyState icon={<BrainCircuit />} title="Factory floor is clear" body="A verified problem will become the first solution program." /> : <div className="card-grid">{data.solutions.map((item, index) => <article className="entity-card" key={index}><StatusPill>{String(item.stage)}</StatusPill><h3>{String(item.title)}</h3><p>{String(item.problem)}</p><small>{String(item.audience)}</small></article>)}</div>}</div>;
 }
 
-function ApprovalCenter({ approvals, onDecision }: { approvals: Approval[]; onDecision: (item: Approval, decision: "approved" | "declined") => void }) {
+function ApprovalCenter({ approvals, onDecision }: { approvals: Approval[]; onDecision: (item: Approval, decision: "approved" | "declined") => Promise<void> }) {
+  const [runningId, setRunningId] = useState<string | null>(null);
   const pending = approvals.filter((item) => item.status === "pending");
-  return <div className="single-workspace"><div className="workspace-intro compact"><div><div className="eyebrow">HUMAN AUTHORITY</div><h2>Nothing consequential<br /><span>happens in the dark.</span></h2></div><UserRoundCheck className="intro-icon" /></div>{pending.length === 0 ? <EmptyState icon={<Check />} title="Approval queue is clear" body="Aegis will surface evidence, risk, cost, and exact scope before asking." /> : <div className="approval-list">{pending.map((item) => <article key={item.id}><div><StatusPill tone={item.risk_level === "high" || item.risk_level === "critical" ? "danger" : "warning"}>{item.risk_level} risk</StatusPill><span>{timeAgo(item.requested_at)}</span></div><h3>{item.summary}</h3><p>Action: {item.action.replaceAll("_", " ")}</p><pre>{JSON.stringify(item.evidence, null, 2)}</pre><footer><button className="decline-button" onClick={() => onDecision(item, "declined")}><X size={15} /> Decline</button><button className="approve-button" onClick={() => onDecision(item, "approved")}><Check size={15} /> Approve</button></footer></article>)}</div>}</div>;
+  const decide = async (item: Approval, decision: "approved" | "declined") => {
+    setRunningId(item.id);
+    try {
+      await onDecision(item, decision);
+    } finally {
+      setRunningId(null);
+    }
+  };
+  return <div className="single-workspace"><div className="workspace-intro compact"><div><div className="eyebrow">HUMAN AUTHORITY</div><h2>Nothing consequential<br /><span>happens in the dark.</span></h2></div><UserRoundCheck className="intro-icon" /></div>{pending.length === 0 ? <EmptyState icon={<Check />} title="Approval queue is clear" body="Aegis will surface evidence, risk, cost, and exact scope before asking." /> : <div className="approval-list">{pending.map((item) => <article key={item.id}><div><StatusPill tone={item.risk_level === "high" || item.risk_level === "critical" ? "danger" : "warning"}>{item.risk_level} risk</StatusPill><span>{timeAgo(item.requested_at)}</span></div><h3>{item.summary}</h3><p>Action: {item.action.replaceAll("_", " ")}</p><pre>{JSON.stringify(item.evidence, null, 2)}</pre><footer><button className="decline-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "declined")}><X size={15} /> Decline</button><button className="approve-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "approved")}>{runningId === item.id ? <Activity size={15} /> : <Check size={15} />} {runningId === item.id && item.action === "public_web_research" ? "Researching…" : item.action === "public_web_research" ? "Approve & run" : "Approve"}</button></footer></article>)}</div>}</div>;
 }
 
 function SecuritySentinel({ data }: { data: Bootstrap }) {
@@ -573,7 +618,7 @@ function SecuritySentinel({ data }: { data: Bootstrap }) {
     ["Chroma", !data.foundation.chroma_server_enabled, String(data.foundation.vector_store_mode)],
     ["Cloud privacy", data.foundation.cloud_private_data === "blocked", String(data.foundation.cloud_private_data)],
     ["Ollama", data.local_model.available, data.local_model.available ? data.local_model.model : "offline"],
-    ["External research", false, String(data.foundation.external_research)],
+    ["External research", data.foundation.external_research === "approved_public_sessions", String(data.foundation.external_research)],
   ];
   return <div className="single-workspace"><div className="workspace-intro security-intro"><div><div className="eyebrow">CONTINUOUS ASSURANCE</div><h2>Trust evidence.<br /><span>Verify everything.</span></h2><p>The foundation remains authoritative for encryption, local inference, data handling, approvals, and network boundaries.</p></div><ShieldCheck className="intro-icon" /></div><div className="security-grid">{controls.map(([name, passed, detail]) => <article key={String(name)} className={passed ? "passed" : "guarded"}><span>{passed ? <Check /> : <LockKeyhole />}</span><div><h3>{String(name)}</h3><p>{String(detail)}</p></div></article>)}</div><div className="panel policy-panel"><PanelHeader icon={<FileCode2 size={17} />} title="Inherited foundation" action={<StatusPill tone="safe">Enforced</StatusPill>} /><p>Every Aegis workspace, agent, skill, and plugin passes through the same SQLCipher, loopback, offline-mode, secret-redaction, and approval controls.</p></div></div>;
 }

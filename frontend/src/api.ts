@@ -76,11 +76,19 @@ export function chat(
   return request("/api/chat", { method: "POST", body: JSON.stringify({ project_id: projectId, message, history }) });
 }
 
-export function requestResearch(projectId: string | null, query: string): Promise<Record<string, unknown>> {
+export function requestResearch(
+  projectId: string | null,
+  query: string,
+  purpose: "world_pulse" | "opportunity" = "world_pulse",
+): Promise<Record<string, unknown>> {
   return request("/api/research/requests", {
     method: "POST",
-    body: JSON.stringify({ project_id: projectId, query, depth: "standard" }),
+    body: JSON.stringify({ project_id: projectId, query, depth: "standard", purpose, category: purpose === "opportunity" ? "business-opportunity" : "general" }),
   });
+}
+
+export function executeResearch(approvalId: string): Promise<Record<string, unknown>> {
+  return request(`/api/research/requests/${approvalId}/execute`, { method: "POST" });
 }
 
 export function createOpportunity(payload: Record<string, unknown>): Promise<Record<string, unknown>> {

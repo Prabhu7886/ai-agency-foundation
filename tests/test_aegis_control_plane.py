@@ -11,7 +11,9 @@ from aegis_core.codex_adapter import CodexAppServerAdapter
 from aegis_core.data_lab import DataLabService
 from aegis_core.github_adapter import GitHubAdapter
 from aegis_core.model_gateway import LocalModelGateway
+from aegis_core.opportunity_reports import OpportunityReportService
 from aegis_core.prompt_compiler import PromptCompiler
+from aegis_core.research import WebResearchService
 from aegis_core.schemas import ChatRequest
 from aegis_core.store import AegisStore
 from aegis_core.world_pulse import WorldPulseService
@@ -229,6 +231,113 @@ def test_world_pulse_preserves_source_quality_and_rejects_local_urls(store: Aegi
     assert result["rejected"] == 1
     assert result["signals"][0]["source_tier"] == "primary"
     assert result["signals"][0]["verification_state"] == "primary_source"
+
+
+def test_approved_public_research_is_narrowly_allowed_offline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "security.yaml").write_text(
+        yaml.safe_dump({"version": 1, "data_handling": {"approved_public_research_sessions": True}}),
+        encoding="utf-8",
+    )
+    (config / "models.yaml").write_text(yaml.safe_dump({"defaults": {"offline_mode": True}}), encoding="utf-8")
+    monkeypatch.setenv("AI_AGENCY_HOME", str(tmp_path))
+    monkeypatch.setenv("AI_AGENCY_OFFLINE_MODE", "true")
+
+    class FakeSearch:
+        def __enter__(self) -> "FakeSearch":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def text(self, _query: str, max_results: int) -> list[dict[str, str]]:
+            assert max_results == 4
+            return [{"title": "Public market signal", "href": "https://example.com/report", "body": "Public evidence"}]
+
+    monkeypatch.setattr("aegis_core.research.DDGS", FakeSearch)
+    service = WebResearchService(FoundationGuard())
+    with pytest.raises(FoundationViolation, match="no approved public-research session"):
+        service.search("AI services for small businesses", "quick")
+    result = service.search("AI services for small businesses", "quick", approved_session=True)
+    assert result["source_count"] == 1
+    assert result["classification"] == "public-only"
+
+
+def test_public_research_fails_closed_when_provider_has_no_sources(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "security.yaml").write_text(
+        yaml.safe_dump({"version": 1, "data_handling": {"approved_public_research_sessions": True}}),
+        encoding="utf-8",
+    )
+    (config / "models.yaml").write_text(yaml.safe_dump({"defaults": {"offline_mode": True}}), encoding="utf-8")
+    monkeypatch.setenv("AI_AGENCY_HOME", str(tmp_path))
+    monkeypatch.setenv("AI_AGENCY_OFFLINE_MODE", "true")
+
+    class EmptySearch:
+        def __enter__(self) -> "EmptySearch":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def text(self, _query: str, max_results: int) -> list[dict[str, str]]:
+            assert max_results == 4
+            return []
+
+    monkeypatch.setattr("aegis_core.research.DDGS", EmptySearch)
+    with pytest.raises(RuntimeError, match="no usable results"):
+        WebResearchService(FoundationGuard()).search(
+            "AI services for small businesses",
+            "quick",
+            approved_session=True,
+        )
+
+
+def test_opportunity_report_is_source_backed_and_encrypted_in_store(store: AegisStore, tmp_path: Path) -> None:
+    project = store.create_project("Opportunity Lab", "Research", tmp_path / "projects" / "opportunity", None)
+    research = {"source_count": 2, "independent_domains": 2, "cross_referenced": True}
+    signals = [
+        {
+            "headline": "Primary demand signal",
+            "summary": "A public agency reports growing adoption.",
+            "source_url": "https://example.gov/report",
+            "domain": "example.gov",
+            "source_tier": "primary",
+            "verification_state": "primary_source",
+            "confidence": 0.78,
+        },
+        {
+            "headline": "Established market signal",
+            "summary": "An established publication describes buyer interest.",
+            "source_url": "https://reuters.com/example",
+            "domain": "reuters.com",
+            "source_tier": "established",
+            "verification_state": "single_source",
+            "confidence": 0.58,
+        },
+    ]
+    report = OpportunityReportService().build("AI workflow audits", research, signals)
+    saved = store.create_research_report(
+        project_id=project["id"],
+        purpose="opportunity",
+        query="AI workflow audits",
+        report=report,
+    )
+
+    assert saved["source_count"] == 2
+    assert saved["independent_domains"] == 2
+    assert saved["report"]["decision_state"] == "research_complete_validation_required"
+    assert saved["report"]["sources"][0]["id"] == "S1"
+    with pytest.raises(ValueError, match="accepted public source"):
+        OpportunityReportService().build("Unsupported idea", {"source_count": 4}, [])
 
 
 def test_data_lab_preserves_raw_and_reports_transformations(store: AegisStore, tmp_path: Path) -> None:

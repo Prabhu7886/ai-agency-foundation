@@ -260,6 +260,38 @@ body::before {
 .allocation-ring small { color: var(--muted); text-transform: uppercase; font-size: 9px; letter-spacing: .14em; }
 .allocation-panel h3 { font: 600 12px "Bahnschrift", "Segoe UI", sans-serif; margin: 15px 0 7px; }
 .allocation-panel p { color: var(--muted); font-size: 10px; }
+.opportunity-workspace { display: grid; gap: 18px; }
+.opportunity-research { width: 100%; max-width: none; margin-bottom: -6px; }
+.opportunity-summary-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(220px, .7fr); gap: 14px; }
+.opportunity-summary-grid .allocation-panel { max-width: none; margin: 0; grid-template-columns: 180px 1fr; gap: 28px; padding: 22px; }
+.opportunity-summary-grid .allocation-ring { width: 150px; height: 150px; }
+.opportunity-metrics { display: grid; grid-template-rows: repeat(3, 1fr); gap: 8px; }
+.opportunity-metrics article { min-height: 72px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); display: flex; flex-direction: column; justify-content: center; }
+.opportunity-metrics strong { font: 700 25px "Bahnschrift", "Segoe UI", sans-serif; color: #eff9ff; }
+.opportunity-metrics span { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.opportunity-section { border: 1px solid var(--line); border-radius: 18px; padding: 20px; background: rgba(12,19,30,.54); }
+.research-report-list { display: grid; gap: 14px; }
+.research-report { border: 1px solid rgba(34,211,238,.15); border-radius: 16px; background: rgba(8,13,22,.62); padding: 20px; }
+.research-report > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.research-report h3 { margin: 7px 0 0; font: 600 19px/1.3 "Bahnschrift", "Segoe UI", sans-serif; }
+.research-report h4 { margin: 16px 0 8px; color: #dce7f4; font-size: 11px; }
+.research-report h5 { margin: 8px 0 5px; font: 600 12px/1.4 "Bahnschrift", "Segoe UI", sans-serif; }
+.research-report ul, .research-report ol { margin: 0; padding-left: 20px; color: #aeb9c9; font-size: 10px; line-height: 1.65; }
+.research-report li + li { margin-top: 5px; }
+.report-findings { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 9px; }
+.report-findings > article { padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.018); }
+.report-findings > article > div { display: flex; justify-content: space-between; align-items: center; color: #5f6d80; font-size: 8px; }
+.report-findings p { color: #a4b0c0; font-size: 9px; line-height: 1.6; }
+.report-findings small { display: block; color: #7c8ca2; font-size: 8px; line-height: 1.5; }
+.research-report > details, .manual-score { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.research-report summary, .manual-score summary { color: #8392a7; font-size: 9px; cursor: pointer; }
+.report-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px 22px; }
+.report-sources { display: grid; gap: 7px; }
+.report-sources a { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; padding: 8px; border: 1px solid var(--line); border-radius: 9px; color: #b7c2d1; text-decoration: none; font-size: 9px; }
+.report-sources a:hover { border-color: rgba(34,211,238,.32); color: #e1fbff; }
+.report-sources a span { grid-column: 1 / -1; color: #607086; font-size: 8px; }
+.manual-score summary { display: flex; align-items: center; gap: 5px; margin-bottom: 12px; }
+.manual-score .workspace-action-form { margin: 0 0 18px; }
 .allocation-bar { height: 5px; background: rgba(255,255,255,.05); border-radius: 9px; overflow: hidden; }
 .allocation-bar i { height: 100%; display: block; background: var(--cyan); }
 .allocation-bar.exploration i { background: var(--gold); }
@@ -360,6 +392,11 @@ body::before {
   .workspace-intro { padding: 14px 4px 22px; min-height: 160px; }
   .intro-icon { width: 70px; height: 70px; margin: 0; }
   .allocation-panel { grid-template-columns: 1fr; }
+  .opportunity-summary-grid { grid-template-columns: 1fr; }
+  .opportunity-summary-grid .allocation-panel { grid-template-columns: 1fr; }
+  .opportunity-metrics { grid-template-columns: repeat(3, 1fr); grid-template-rows: none; }
+  .report-findings, .report-detail-grid { grid-template-columns: 1fr; }
+  .research-report > header { flex-direction: column; }
   .data-pipeline { grid-template-columns: 1fr 1fr; }
   .factory-flow { justify-content: flex-start; }
   .ai-workspace__header { align-items: flex-start; flex-direction: column; }
