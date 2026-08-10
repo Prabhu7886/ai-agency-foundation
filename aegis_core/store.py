@@ -880,6 +880,71 @@ class AegisStore:
                 )
             )
 
+    def list_world_pulse_source_candidates(self) -> list[dict[str, Any]]:
+        with self.database.connection() as connection:
+            rows = self._rows(
+                connection.execute(
+                    """SELECT c.*, a.status AS approval_status, a.decided_at
+                    FROM aegis_world_pulse_source_candidates c
+                    JOIN aegis_approvals a ON a.id = c.approval_id
+                    ORDER BY c.created_at DESC"""
+                )
+            )
+        for row in rows:
+            row["identity_verified"] = bool(row["identity_verified"])
+            row["status"] = "approved" if row["approval_status"] == "approved" else row["approval_status"]
+        return rows
+
+    def create_world_pulse_source_candidate(self, payload: dict[str, Any], approval_id: str) -> dict[str, Any]:
+        candidate_id = new_id("pulse-source")
+        with self.database.connection() as connection:
+            connection.execute(
+                """INSERT INTO aegis_world_pulse_source_candidates
+                (id, label, niche, source_type, locator, reason, identity_verified, approval_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    candidate_id,
+                    payload["label"],
+                    payload["niche"],
+                    payload["source_type"],
+                    payload["locator"],
+                    payload.get("reason", ""),
+                    int(payload.get("identity_verified", False)),
+                    approval_id,
+                    utc_now(),
+                ),
+            )
+            self._activity(connection, "pulse_source_proposed", f"Proposed World Pulse source: {payload['label']}", "pulse_source", candidate_id)
+        return next(item for item in self.list_world_pulse_source_candidates() if item["id"] == candidate_id)
+
+    def list_world_pulse_schedules(self) -> list[dict[str, Any]]:
+        with self.database.connection() as connection:
+            return self._rows(connection.execute("SELECT * FROM aegis_world_pulse_schedules ORDER BY updated_at DESC"))
+
+    def create_world_pulse_schedule(self, payload: dict[str, Any]) -> dict[str, Any]:
+        schedule_id = new_id("pulse-schedule")
+        now = utc_now()
+        with self.database.connection() as connection:
+            connection.execute(
+                """INSERT INTO aegis_world_pulse_schedules
+                (id, name, niche, query, cadence_hours, execution_policy, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'approval_each_run', 'planned', ?, ?)""",
+                (schedule_id, payload["name"], payload["niche"], payload["query"], payload["cadence_hours"], now, now),
+            )
+            self._activity(connection, "pulse_schedule_created", f"Created approval-gated research schedule: {payload['name']}", "pulse_schedule", schedule_id)
+        return next(item for item in self.list_world_pulse_schedules() if item["id"] == schedule_id)
+
+    def mark_world_pulse_schedule_requested(self, schedule_id: str) -> dict[str, Any]:
+        now = utc_now()
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                "UPDATE aegis_world_pulse_schedules SET last_requested_at = ?, updated_at = ? WHERE id = ?",
+                (now, now, schedule_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("World Pulse schedule not found")
+        return next(item for item in self.list_world_pulse_schedules() if item["id"] == schedule_id)
+
     def add_world_pulse(
         self,
         *,

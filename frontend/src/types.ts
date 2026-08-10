@@ -156,6 +156,27 @@ export type LearningMemory = {
   status: "proposed" | "confirmed" | "disabled";
   affects_authority: boolean;
 };
+export type WorldPulseSourceCandidate = {
+  id: string;
+  label: string;
+  niche: string;
+  source_type: "publisher" | "public_account" | "public_data";
+  locator: string;
+  reason: string;
+  identity_verified: boolean;
+  status: string;
+  approval_status: string;
+};
+export type WorldPulseSchedule = {
+  id: string;
+  name: string;
+  niche: string;
+  query: string;
+  cadence_hours: number;
+  execution_policy: "approval_each_run";
+  status: "planned" | "paused";
+  last_requested_at?: string | null;
+};
 export type ResearchReport = {
   id: string;
   project_id?: string | null;
@@ -266,6 +287,8 @@ export type Bootstrap = {
   plugins: Plugin[];
   approvals: Approval[];
   world_pulse: WorldPulseItem[];
+  world_pulse_sources: WorldPulseSourceCandidate[];
+  world_pulse_schedules: WorldPulseSchedule[];
   research_reports: ResearchReport[];
   opportunities: Array<Record<string, unknown>>;
   solutions: Array<Record<string, unknown>>;

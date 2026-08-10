@@ -317,6 +317,33 @@ CREATE TABLE IF NOT EXISTS aegis_world_pulse_sources (
 );
 CREATE INDEX IF NOT EXISTS idx_aegis_pulse_sources ON aegis_world_pulse_sources(pulse_id, domain);
 
+CREATE TABLE IF NOT EXISTS aegis_world_pulse_source_candidates (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    niche TEXT NOT NULL,
+    source_type TEXT NOT NULL CHECK(source_type IN ('publisher', 'public_account', 'public_data')),
+    locator TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    identity_verified BOOLEAN NOT NULL DEFAULT 0,
+    approval_id TEXT NOT NULL REFERENCES aegis_approvals(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    UNIQUE(source_type, locator)
+);
+
+CREATE TABLE IF NOT EXISTS aegis_world_pulse_schedules (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    niche TEXT NOT NULL,
+    query TEXT NOT NULL,
+    cadence_hours INTEGER NOT NULL CHECK(cadence_hours BETWEEN 1 AND 720),
+    execution_policy TEXT NOT NULL DEFAULT 'approval_each_run'
+        CHECK(execution_policy IN ('approval_each_run')),
+    status TEXT NOT NULL DEFAULT 'planned' CHECK(status IN ('planned', 'paused')),
+    last_requested_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS aegis_research_reports (
     id TEXT PRIMARY KEY,
     project_id TEXT REFERENCES aegis_projects(id) ON DELETE SET NULL,
@@ -495,6 +522,8 @@ class DatabaseSetup:
             "aegis_approval_executions",
             "aegis_world_pulse",
             "aegis_world_pulse_sources",
+            "aegis_world_pulse_source_candidates",
+            "aegis_world_pulse_schedules",
             "aegis_research_reports",
             "aegis_opportunities",
             "aegis_solutions",

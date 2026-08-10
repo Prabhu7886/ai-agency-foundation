@@ -469,6 +469,36 @@ def test_world_pulse_preserves_source_quality_and_rejects_local_urls(store: Aegi
     assert result["signals"][0]["verification_state"] == "primary_source"
 
 
+def test_world_pulse_source_candidates_and_schedules_remain_approval_gated(store: AegisStore) -> None:
+    approval = store.create_approval(
+        "world_pulse_source",
+        "Approve Federal Reserve public data",
+        "medium",
+        evidence={"monitoring_scope": "public_information_only"},
+    )
+    source = store.create_world_pulse_source_candidate(
+        {
+            "label": "Federal Reserve",
+            "niche": "economy-trade",
+            "source_type": "public_data",
+            "locator": "https://www.federalreserve.gov/data.htm",
+            "reason": "Primary public economic data",
+            "identity_verified": True,
+        },
+        approval["id"],
+    )
+    assert source["status"] == "pending"
+    store.decide_approval(approval["id"], "approved")
+    assert store.list_world_pulse_source_candidates()[0]["status"] == "approved"
+
+    schedule = store.create_world_pulse_schedule(
+        {"name": "AI policy watch", "niche": "ai-technology", "query": "official AI policy updates", "cadence_hours": 24}
+    )
+    assert schedule["execution_policy"] == "approval_each_run"
+    assert schedule["last_requested_at"] is None
+    assert store.mark_world_pulse_schedule_requested(schedule["id"])["last_requested_at"]
+
+
 def test_world_pulse_does_not_call_same_domain_duplicates_corroborated(store: AegisStore) -> None:
     result = WorldPulseService(store).ingest(
         {

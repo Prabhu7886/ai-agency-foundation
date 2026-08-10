@@ -411,6 +411,21 @@ body::before {
 .pulse-reader h2 { font: 600 28px/1.15 "Bahnschrift", "Segoe UI", sans-serif; }
 .pulse-reader > p, .pulse-reader section p { color: var(--muted); line-height: 1.75; }
 .reader-evidence { display: flex; align-items: center; gap: 10px; margin: 20px 0; color: #718197; font-size: 9px; }
+.pulse-operations { display: grid; gap: 12px; margin: 14px 0 22px; }
+.pulse-operation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.pulse-operation-grid details { padding: 14px; }
+.pulse-operation-grid summary { display: flex; align-items: center; gap: 6px; color: #a9b8ca; font-size: 10px; cursor: pointer; }
+.pulse-operation-grid form { display: grid; gap: 8px; margin-top: 13px; }
+.pulse-operation-grid input, .pulse-operation-grid select { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: rgba(3,8,14,.52); color: #dbe6f2; padding: 9px; font-size: 9px; }
+.pulse-operation-grid label, .pulse-operation-grid small { color: #68788c; font-size: 8px; line-height: 1.5; }
+.pulse-schedule-list { display: grid; gap: 7px; }
+.pulse-schedule-list article { display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: rgba(255,255,255,.015); }
+.pulse-schedule-list article div { display: grid; gap: 4px; }
+.pulse-schedule-list strong { color: #b8c5d5; font-size: 10px; }
+.pulse-schedule-list span { color: #68788c; font-size: 8px; text-transform: capitalize; }
+.pulse-schedule-list button { border: 1px solid rgba(34,211,238,.22); border-radius: 8px; background: var(--cyan-soft); color: var(--cyan); padding: 7px 10px; font-size: 8px; cursor: pointer; }
+.approved-source-strip { display: flex; flex-wrap: wrap; gap: 8px; }
+.approved-source-strip > span { display: flex; align-items: center; gap: 6px; color: #8291a6; font-size: 8px; }
 .approval-queue-tabs button { display: flex; align-items: center; gap: 8px; border-radius: 10px; }
 .approval-queue-tabs b { min-width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: rgba(255,255,255,.06); }
 .hub-hero { min-height: 330px; display: grid; grid-template-columns: minmax(190px, 290px) minmax(0, 1fr); align-items: center; gap: 36px; padding: 20px 24px 30px; border-bottom: 1px solid var(--line); }
@@ -499,7 +514,7 @@ body::before {
   .github-operation-form { grid-template-columns: 1fr; }
   .github-operation-form .primary-button { width: 100%; }
   .workspace-intro { padding: 14px 4px 22px; min-height: 160px; }
-  .hub-hero, .academy-layout, .hub-grid, .learning-control { grid-template-columns: 1fr; }
+  .hub-hero, .academy-layout, .hub-grid, .learning-control, .pulse-operation-grid { grid-template-columns: 1fr; }
   .hub-hero { padding: 6px 0 22px; }
   .hub-hero img { max-height: 360px; }
   .intro-icon { width: 70px; height: 70px; margin: 0; }

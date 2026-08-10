@@ -149,11 +149,20 @@ export function requestResearch(
   query: string,
   purpose: "world_pulse" | "opportunity" = "world_pulse",
   category?: string,
+  scheduleId?: string,
 ): Promise<Record<string, unknown>> {
   return request("/api/research/requests", {
     method: "POST",
-    body: JSON.stringify({ project_id: projectId, query, depth: "standard", purpose, category: category ?? (purpose === "opportunity" ? "business-opportunity" : "general") }),
+    body: JSON.stringify({ project_id: projectId, query, depth: "standard", purpose, category: category ?? (purpose === "opportunity" ? "business-opportunity" : "general"), schedule_id: scheduleId }),
   });
+}
+
+export function proposeWorldPulseSource(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return request("/api/world-pulse/sources", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function createWorldPulseSchedule(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return request("/api/world-pulse/schedules", { method: "POST", body: JSON.stringify(payload) });
 }
 
 export function executeResearch(approvalId: string): Promise<Record<string, unknown>> {

@@ -56,6 +56,8 @@ from aegis_core.schemas import (
     TaskCreate,
     TaskUpdate,
     VoiceSpeakRequest,
+    WorldPulseScheduleCreate,
+    WorldPulseSourceCandidateCreate,
 )
 from aegis_core.security_sentinel import SecuritySentinelService
 from aegis_core.store import AegisStore, slugify
@@ -127,7 +129,7 @@ def create_app(
 
     app = FastAPI(
         title="Aegis Local Executive API",
-        version="0.7.0",
+        version="0.7.1",
         description="Local-first executive control plane built on the AI Agency security foundation.",
         lifespan=lifespan,
         docs_url="/api/docs" if os.getenv("AEGIS_ENABLE_API_DOCS", "false").lower() == "true" else None,
@@ -175,7 +177,7 @@ def create_app(
         codex_plugin = plugins.get("plugin-codex", {})
         local_status = await asyncio.to_thread(model_router.status)
         return {
-            "version": "0.7.0",
+            "version": "0.7.1",
             "workspaces": [item["label"] for item in WORKSPACES],
             "overview": store.overview(),
             "agents": [
@@ -245,7 +247,7 @@ def create_app(
             "status": "ok",
             "local_only": True,
             "service": "aegis",
-            "version": "0.7.0",
+            "version": "0.7.1",
             "database": "sqlcipher-required",
             "prompt_compiler": "required",
         }
@@ -290,6 +292,8 @@ def create_app(
             "plugins": plugins,
             "approvals": store.list_approvals(),
             "world_pulse": store.list_world_pulse(),
+            "world_pulse_sources": store.list_world_pulse_source_candidates(),
+            "world_pulse_schedules": store.list_world_pulse_schedules(),
             "research_reports": store.list_research_reports(),
             "opportunities": store.list_opportunities(),
             "solutions": store.list_solutions(),
@@ -751,6 +755,8 @@ def create_app(
     @app.post("/api/research/requests", dependencies=[Depends(require_session)])
     async def request_research(payload: ResearchRequest) -> dict[str, Any]:
         clean = guard.sanitize_public_query(payload.query)
+        if payload.schedule_id and not any(item["id"] == payload.schedule_id for item in store.list_world_pulse_schedules()):
+            raise HTTPException(status_code=404, detail="World Pulse schedule not found")
         task_id = None
         if payload.project_id:
             task = store.create_task(
@@ -775,9 +781,46 @@ def create_app(
                 "regions": payload.regions,
                 "purpose": payload.purpose,
                 "private_data_blocked": True,
+                "schedule_id": payload.schedule_id,
             },
         )
+        if payload.schedule_id:
+            store.mark_world_pulse_schedule_requested(payload.schedule_id)
         return {"approval": approval, "task_id": task_id}
+
+    @app.post("/api/world-pulse/sources", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_session)])
+    async def propose_world_pulse_source(payload: WorldPulseSourceCandidateCreate) -> dict[str, Any]:
+        if any(
+            item["source_type"] == payload.source_type and item["locator"] == payload.locator
+            for item in store.list_world_pulse_source_candidates()
+        ):
+            raise HTTPException(status_code=409, detail="This source is already registered")
+        approval = store.create_approval(
+            action="world_pulse_source",
+            summary=f"Approve {payload.label} as a monitored {payload.source_type.replace('_', ' ')}",
+            risk_level="medium",
+            evidence={
+                "label": payload.label,
+                "niche": payload.niche,
+                "source_type": payload.source_type,
+                "locator": payload.locator,
+                "reason": payload.reason,
+                "identity_verified": payload.identity_verified,
+                "monitoring_scope": "public_information_only",
+            },
+            approval_queue="security_operations",
+        )
+        try:
+            candidate = store.create_world_pulse_source_candidate(payload.model_dump(), approval["id"])
+        except Exception as exc:
+            if "UNIQUE" in str(exc).upper():
+                raise HTTPException(status_code=409, detail="This source is already registered") from exc
+            raise
+        return {"source": candidate, "approval": approval}
+
+    @app.post("/api/world-pulse/schedules", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_session)])
+    async def create_world_pulse_schedule(payload: WorldPulseScheduleCreate) -> dict[str, Any]:
+        return store.create_world_pulse_schedule(payload.model_dump())
 
     @app.post("/api/research/requests/{approval_id}/execute", dependencies=[Depends(require_session)])
     async def execute_research(approval_id: str) -> dict[str, Any]:

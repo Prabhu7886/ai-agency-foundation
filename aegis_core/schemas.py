@@ -88,6 +88,23 @@ class ResearchRequest(BaseModel):
     category: str = Field(default="general", min_length=2, max_length=80)
     regions: list[str] = Field(default_factory=lambda: ["Global"], max_length=20)
     purpose: Literal["world_pulse", "opportunity"] = "world_pulse"
+    schedule_id: str | None = Field(default=None, max_length=100)
+
+
+class WorldPulseSourceCandidateCreate(BaseModel):
+    label: str = Field(min_length=2, max_length=160)
+    niche: str = Field(min_length=2, max_length=80)
+    source_type: Literal["publisher", "public_account", "public_data"]
+    locator: str = Field(min_length=3, max_length=1000)
+    reason: str = Field(min_length=5, max_length=2000)
+    identity_verified: bool = False
+
+
+class WorldPulseScheduleCreate(BaseModel):
+    name: str = Field(min_length=3, max_length=160)
+    niche: str = Field(min_length=2, max_length=80)
+    query: str = Field(min_length=3, max_length=500)
+    cadence_hours: int = Field(ge=1, le=720)
 
 
 class PluginChange(BaseModel):

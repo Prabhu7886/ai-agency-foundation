@@ -55,6 +55,7 @@ import {
   createOpportunity,
   createProject,
   createSolution,
+  createWorldPulseSchedule,
   createSkill,
   deleteConversation,
   decideApproval,
@@ -69,6 +70,7 @@ import {
   requestCodexDeviceLogin,
   requestCodexTask,
   requestResearch,
+  proposeWorldPulseSource,
   requestGitHubOperation,
   requestDataJob,
   requestSolutionTransition,
@@ -334,7 +336,7 @@ export default function App() {
             />
           )}
           {activeWorkspace === "world-pulse" && (
-            <WorldPulse data={data} project={selectedProject} onResearch={(query, category) => mutate(() => requestResearch(selectedProject?.id ?? null, query, "world_pulse", category), "Research request sent to Approval Center")} />
+            <WorldPulse data={data} project={selectedProject} onResearch={(query, category, scheduleId) => mutate(() => requestResearch(selectedProject?.id ?? null, query, "world_pulse", category, scheduleId), "Research request sent to Approval Center")} onCreateSource={(payload) => mutate(() => proposeWorldPulseSource(payload), "Source proposal sent to Security & Operations approvals")} onCreateSchedule={(payload) => mutate(() => createWorldPulseSchedule(payload), "Approval-gated research schedule saved")} />
           )}
           {activeWorkspace === "opportunity-engine" && <OpportunityEngine data={data} project={selectedProject} onResearch={(query) => mutate(() => requestResearch(selectedProject?.id ?? null, query, "opportunity"), "Opportunity research sent to Approval Center")} onCreate={(payload) => mutate(() => createOpportunity(payload), "Opportunity scored from explicit evidence")} onSendToFactory={(payload) => mutate(() => createSolution(payload), "Opportunity sent to Solution Factory")} />}
           {activeWorkspace === "solution-factory" && <><SolutionCreateForm onCreate={(payload) => mutate(() => createSolution(payload), "Solution program created at discovery stage")} /><SolutionFactory data={data} onTransition={(id, stage, proof) => mutate(() => requestSolutionTransition(id, stage, proof), "Stage transition sent to Business & Creative approvals")} /></>}
@@ -874,7 +876,27 @@ function LegacyWorldPulse({ data, project, onResearch }: { data: Bootstrap; proj
   return <div className="single-workspace"><div className="workspace-intro pulse-intro"><div><div className="eyebrow">GLOBAL IMPACT INTELLIGENCE</div><h2>Signal over noise.<br /><span>Every claim earns its confidence.</span></h2><p>AI, IT, economies, conflicts, trade, gold, silver, politicians, insiders, and institutional holdings.</p></div><Radar className="intro-icon" /></div><form className="research-bar" onSubmit={submit}><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Research a public topic…" /><button disabled={!query.trim()}>Request research</button></form><div className="source-policy"><ShieldCheck size={16} /><span>Public queries only. Web access requires Approval Center authorization and an approved research session.</span></div>{data.world_pulse.length === 0 ? <EmptyState icon={<Globe2 />} title="World Pulse is protected and waiting" body={`No unverified headlines are displayed. Start an approved research task${project ? ` for ${project.name}` : ""}.`} /> : <div className="card-grid">{data.world_pulse.map((item, index) => <article className="entity-card pulse-card" key={index}><div className="pulse-card__meta"><StatusPill tone={String(item.verification_state) === "single_source" ? "neutral" : "safe"}>{String(item.verification_state ?? "unverified").replaceAll("_", " ")}</StatusPill><span>{Math.round(Number(item.confidence ?? 0) * 100)}% source confidence</span></div><h3>{String(item.headline)}</h3><p>{String(item.summary)}</p>{item.source_url && <a href={String(item.source_url)} target="_blank" rel="noreferrer">{String(item.domain ?? "Open source")} <ArrowUpRight size={12} /></a>}</article>)}</div>}</div>;
 }
 
-function WorldPulse({ data, project, onResearch }: { data: Bootstrap; project: Project | null; onResearch: (query: string, category: string) => Promise<void> }) {
+function WorldPulseControls({ data, onResearch, onCreateSource, onCreateSchedule }: {
+  data: Bootstrap;
+  onResearch: (query: string, category: string, scheduleId?: string) => Promise<void>;
+  onCreateSource: (payload: Record<string, unknown>) => Promise<void>;
+  onCreateSchedule: (payload: Record<string, unknown>) => Promise<void>;
+}) {
+  const [schedule, setSchedule] = useState({ name: "", niche: "ai-technology", query: "", cadence_hours: 24 });
+  const [source, setSource] = useState({ label: "", niche: "ai-technology", source_type: "publisher", locator: "", reason: "" });
+  const submitSchedule = async (event: FormEvent) => { event.preventDefault(); await onCreateSchedule(schedule); setSchedule({ name: "", niche: "ai-technology", query: "", cadence_hours: 24 }); };
+  const submitSource = async (event: FormEvent) => { event.preventDefault(); await onCreateSource({ ...source, identity_verified: false }); setSource({ label: "", niche: "ai-technology", source_type: "publisher", locator: "", reason: "" }); };
+  return <section className="pulse-operations">
+    <div className="pulse-operation-grid">
+      <details className="panel"><summary><Plus size={13} /> Save research schedule</summary><form onSubmit={submitSchedule}><input required value={schedule.name} onChange={(event) => setSchedule({ ...schedule, name: event.target.value })} placeholder="Schedule name" /><input required value={schedule.query} onChange={(event) => setSchedule({ ...schedule, query: event.target.value })} placeholder="Bounded public query" /><select value={schedule.niche} onChange={(event) => setSchedule({ ...schedule, niche: event.target.value })}><option value="ai-technology">AI & technology</option><option value="markets-trades">Markets & trades</option><option value="economy-trade">Economy & trade</option><option value="us-politics">US politics</option><option value="global-affairs">Global affairs</option><option value="commodities">Commodities</option></select><label>Cadence (hours)<input type="number" min="1" max="720" value={schedule.cadence_hours} onChange={(event) => setSchedule({ ...schedule, cadence_hours: Number(event.target.value) })} /></label><button className="secondary-button">Save plan</button><small>Each run still creates a Security & Operations approval. No unattended network access is enabled.</small></form></details>
+      <details className="panel"><summary><Plus size={13} /> Propose trusted source</summary><form onSubmit={submitSource}><input required value={source.label} onChange={(event) => setSource({ ...source, label: event.target.value })} placeholder="Publisher or public account" /><input required value={source.locator} onChange={(event) => setSource({ ...source, locator: event.target.value })} placeholder="Official URL or public handle" /><select value={source.source_type} onChange={(event) => setSource({ ...source, source_type: event.target.value })}><option value="publisher">Publisher</option><option value="public_account">Public account</option><option value="public_data">Public dataset</option></select><input required minLength={5} value={source.reason} onChange={(event) => setSource({ ...source, reason: event.target.value })} placeholder="Why should Aegis monitor it?" /><button className="secondary-button">Send for approval</button><small>Approval means the source may be monitored; it does not make every claim from that source true.</small></form></details>
+    </div>
+    {data.world_pulse_schedules.length > 0 && <div className="pulse-schedule-list">{data.world_pulse_schedules.map((item) => <article key={item.id}><div><strong>{item.name}</strong><span>{item.niche.replaceAll("-", " ")} · every {item.cadence_hours}h · {item.last_requested_at ? `requested ${timeAgo(item.last_requested_at)} ago` : "never requested"}</span></div><button onClick={() => void onResearch(item.query, item.niche, item.id)}>Request run now</button></article>)}</div>}
+    {data.world_pulse_sources.length > 0 && <div className="approved-source-strip">{data.world_pulse_sources.map((item) => <span key={item.id}><StatusPill tone={item.status === "approved" ? "safe" : "warning"}>{item.status}</StatusPill>{item.label} · {item.source_type.replaceAll("_", " ")}</span>)}</div>}
+  </section>;
+}
+
+function WorldPulse({ data, project, onResearch, onCreateSource, onCreateSchedule }: { data: Bootstrap; project: Project | null; onResearch: (query: string, category: string, scheduleId?: string) => Promise<void>; onCreateSource: (payload: Record<string, unknown>) => Promise<void>; onCreateSchedule: (payload: Record<string, unknown>) => Promise<void> }) {
   const niches = ["all", "ai-technology", "markets-trades", "economy-trade", "us-politics", "global-affairs", "commodities", "public-figures"];
   const [query, setQuery] = useState("");
   const [niche, setNiche] = useState("all");
@@ -895,6 +917,7 @@ function WorldPulse({ data, project, onResearch }: { data: Bootstrap; project: P
     <div className="niche-tabs">{niches.map((item) => <button key={item} className={niche === item ? "active" : ""} onClick={() => setNiche(item)}>{item.replaceAll("-", " ")}</button>)}</div>
     <form className="research-bar" onSubmit={submit}><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Research ${niche === "all" ? "a public topic" : niche.replaceAll("-", " ")}…`} /><button disabled={!query.trim()}>Request research</button></form>
     <div className="source-policy"><ShieldCheck size={16} /><span>Public queries only. Research requires approval; reporting, commentary, and social claims remain visibly distinct.</span></div>
+    <WorldPulseControls data={data} onResearch={onResearch} onCreateSource={onCreateSource} onCreateSchedule={onCreateSchedule} />
     {items.length === 0 ? <EmptyState icon={<Globe2 />} title="No verified signals in this niche" body={`Start an approved research task${project ? ` for ${project.name}` : ""}. Aegis does not fill empty space with unverified headlines.`} /> : <div className="card-grid">{items.map((item, index) => <article className="entity-card pulse-card" key={item.id ?? index}><div className="pulse-card__meta"><StatusPill tone={item.verification_state === "single_source" ? "neutral" : "safe"}>{item.verification_state.replaceAll("_", " ")}</StatusPill><span>{Math.round(item.confidence * 100)}% confidence</span></div><small>{String(item.category ?? "general").replaceAll("-", " ")} · {String(item.region ?? "Global")}</small><h3>{item.headline}</h3><p>{item.summary}</p><button className="reader-button" onClick={() => setReader(item)}>Read inside Aegis <ChevronRight size={12} /></button></article>)}</div>}
     {reader && <div className="reader-backdrop" onMouseDown={() => setReader(null)}><aside className="pulse-reader" onMouseDown={(event) => event.stopPropagation()}><header><div><div className="eyebrow">AEGIS INTERNAL READER</div><h2>{reader.headline}</h2></div><button className="icon-button" onClick={() => setReader(null)}><X size={18} /></button></header><div className="reader-evidence"><StatusPill tone={reader.verification_state === "single_source" ? "warning" : "safe"}>{reader.verification_state.replaceAll("_", " ")}</StatusPill><span>{Math.round(reader.confidence * 100)}% source confidence</span></div><p>{reader.summary}</p><section><h3>Why it matters</h3><p>This brief is stored locally from an approved research session. Review the original before making a consequential decision.</p></section>{reader.source_url && <a className="primary-button" href={reader.source_url}>Open original in this tab <ArrowUpRight size={14} /></a>}</aside></div>}
   </div>;
