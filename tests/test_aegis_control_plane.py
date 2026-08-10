@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from pathlib import Path
 
 import pytest
@@ -178,6 +179,33 @@ def test_prompt_compiler_keeps_owner_constraints_authoritative() -> None:
     assert compiled["compiler_mode"] == "ollama-local"
     assert f"OWNER INTENT (authoritative; preserve every constraint): {original}" in compiled["compiled_prompt"]
     assert "REWRITTEN EXECUTION CONTRACT" in compiled["compiled_prompt"]
+    assert compiled["execution_steps"] == ["Answer the owner's question directly from supplied verified context"]
+    assert "Follow the owner's requested length and format exactly" in compiled["constraints"]
+
+
+def test_prompt_compiler_does_not_hide_destructive_actions_behind_informational_wording() -> None:
+    class LowRiskGateway:
+        model = "test-local"
+
+        def generate(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            return {
+                "response": json.dumps(
+                    {
+                        "objective": "Explain and execute",
+                        "deliverable": "Result",
+                        "execution_steps": ["Delete files"],
+                        "risk_level": "low",
+                        "approvals_required": [],
+                        "success_evidence": ["Done"],
+                        "data_classification": "internal",
+                    }
+                )
+            }
+
+    compiler = PromptCompiler(LowRiskGateway())
+    compiled = compiler.compile("Explain this plan and then delete every project file", {"project": "Aegis"})
+    assert compiled["risk_level"] == "high"
+    assert compiled["approvals_required"]
 
 
 def test_chat_history_is_bounded_for_local_conversation_context() -> None:
@@ -278,6 +306,43 @@ def test_engineering_adapters_enforce_bounded_identifiers(monkeypatch: pytest.Mo
     assert CodexAppServerAdapter(guard, executable=str(tmp_path / "missing.exe")).status()["installed"] is False
 
 
+def test_github_controlled_maintenance_stages_only_explicit_registered_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "config"
+    config.mkdir(exist_ok=True)
+    (config / "security.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "github": {"controlled_maintenance_enabled": True, "require_single_use_approval": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (config / "models.yaml").write_text(yaml.safe_dump({"defaults": {"offline_mode": True}}), encoding="utf-8")
+    monkeypatch.setenv("AI_AGENCY_HOME", str(tmp_path))
+    monkeypatch.setenv("AI_AGENCY_OFFLINE_MODE", "true")
+    repository = tmp_path / "projects" / "repo"
+    repository.mkdir(parents=True)
+    GitHubAdapter._run(["git", "-C", str(repository), "init"], timeout=15)
+    GitHubAdapter._run(["git", "-C", str(repository), "remote", "add", "origin", "https://github.com/example/repo"], timeout=15)
+    GitHubAdapter._run(["git", "-C", str(repository), "switch", "-c", "codex/test"], timeout=15)
+    (repository / "safe.txt").write_text("bounded", encoding="utf-8")
+    guard = FoundationGuard()
+    adapter = GitHubAdapter(guard, executable=str(tmp_path / "missing.exe"))
+    project = {"id": "project-test", "root_path": str(repository), "repository_url": "https://github.com/example/repo"}
+
+    result = adapter.execute(project, "stage_files", {"paths": ["safe.txt"]})
+    assert result["returncode"] == 0
+    staged = GitHubAdapter._run(["git", "-C", str(repository), "diff", "--cached", "--name-only"], timeout=15)
+    assert staged["output"].strip() == "safe.txt"
+    with pytest.raises(FoundationViolation, match="escapes"):
+        adapter.execute(project, "stage_files", {"paths": ["../outside.txt"]})
+    adapter._assert_online(approved_network=True)
+
+
 def test_world_pulse_preserves_source_quality_and_rejects_local_urls(store: AegisStore) -> None:
     result = WorldPulseService(store).ingest(
         {
@@ -332,10 +397,49 @@ def test_approved_public_research_is_narrowly_allowed_offline(
     service = WebResearchService(FoundationGuard())
     with pytest.raises(FoundationViolation, match="no approved public-research session"):
         service.search("AI services for small businesses", "quick")
-    result = service.search("AI services for small businesses", "quick", approved_session=True)
+    result = service.search("AI services for small businesses", "quick", approved_session=True, verify_pages=False)
     assert result["source_count"] == 2
     assert result["classification"] == "public-only"
     assert result["research_lanes"]["primary"]["accepted"] == 1
+
+
+def test_full_page_verification_extracts_bounded_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "security.yaml").write_text(yaml.safe_dump({"version": 1}), encoding="utf-8")
+    (config / "models.yaml").write_text(yaml.safe_dump({"defaults": {"offline_mode": True}}), encoding="utf-8")
+    monkeypatch.setenv("AI_AGENCY_HOME", str(tmp_path))
+    monkeypatch.setattr("aegis_core.research.socket.getaddrinfo", lambda *_args, **_kwargs: [(2, 1, 6, "", ("93.184.216.34", 443))])
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"Content-Type": "text/html", "Content-Length": "500"}
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, chunk_size: int) -> list[bytes]:
+            assert chunk_size == 65_536
+            return [b'''<html><head><title>Official survey</title>
+                <meta property="article:published_time" content="2026-07-01">
+                <link rel="canonical" href="https://example.gov/report"></head>
+                <body><h1>Official survey</h1><p>Methodology and sample size are documented.</p></body></html>''']
+
+    monkeypatch.setattr("aegis_core.research.requests.get", lambda *_args, **_kwargs: FakeResponse())
+    result = WebResearchService(FoundationGuard())._fetch_source(
+        {"title": "Official survey", "url": "https://example.gov/report", "summary": "Search excerpt"}
+    )
+    assert result["page_verification_state"] == "verified_html"
+    assert result["date_source"] == "page_metadata"
+    assert result["published_at"] == "2026-07-01"
+    assert result["methodology_terms"] == ["methodology", "sample size"]
+    assert len(result["content_sha256"]) == 64
 
 
 def test_public_research_fails_closed_when_provider_has_no_sources(
@@ -411,6 +515,30 @@ def test_opportunity_report_is_source_backed_and_encrypted_in_store(store: Aegis
     assert saved["report"]["source_metrics"]["high_trust_source_count"] == 2
     with pytest.raises(ValueError, match="accepted public source"):
         OpportunityReportService().build("Unsupported idea", {"source_count": 4}, [])
+
+
+def test_opportunity_report_requires_verified_page_evidence_for_supported_gate() -> None:
+    signals = [
+        {
+            "headline": f"Primary source {index}",
+            "summary": "Official methodology-backed evidence.",
+            "source_url": f"https://agency{index}.gov/report",
+            "domain": f"agency{index}.gov",
+            "source_tier": "primary",
+            "verification_state": "primary_source",
+            "confidence": 0.78,
+            "published_at": "2026-07-01",
+            "page_verification_state": "verified_html",
+            "date_source": "page_metadata",
+            "methodology_terms": ["methodology"],
+            "content_sha256": "a" * 64,
+        }
+        for index in range(2)
+    ]
+    report = OpportunityReportService().build("Verified market", {"source_count": 2}, signals)
+    assert report["quality_gate"] == "supported_discovery"
+    assert report["source_metrics"]["verified_page_count"] == 2
+    assert report["source_metrics"]["verified_date_count"] == 2
 
 
 def test_data_lab_preserves_raw_and_reports_transformations(store: AegisStore, tmp_path: Path) -> None:

@@ -19,7 +19,11 @@ and constructive. No empty hype and no defeatist answers. When a goal is difficu
 constraint, the safest workable path, the cheapest useful test, and the evidence required to proceed.
 Never claim an action ran, a security control passed, or current data was verified without evidence.
 Never request that private client data be sent to a cloud service. Consequential actions require the
-owner's approval.
+owner's approval. Answer the owner's actual question first. Follow requested length and format exactly.
+Do not narrate the prompt compiler, invent extra steps, or ask for clarification when the supplied
+verified context already resolves the question. When the owner requests one sentence, return only
+that sentence with no heading, preamble, bullets, or follow-up; include every requested fact in the
+same sentence by joining clauses with "and" or a semicolon.
 """.strip()
 
 
@@ -48,7 +52,26 @@ class LocalModelGateway:
             response = requests.get(f"{self.endpoint}/api/tags", timeout=(1, 2))
             response.raise_for_status()
             models = [item.get("name") for item in response.json().get("models", [])]
-            return {"available": True, "endpoint": self.endpoint, "model": self.model, "models": models}
+            active: dict[str, Any] = {}
+            try:
+                running = requests.get(f"{self.endpoint}/api/ps", timeout=(1, 2))
+                running.raise_for_status()
+                active = next(
+                    (item for item in running.json().get("models", []) if item.get("name") == self.model),
+                    {},
+                )
+            except Exception:
+                active = {}
+            size_vram = int(active.get("size_vram", 0))
+            return {
+                "available": True,
+                "endpoint": self.endpoint,
+                "model": self.model,
+                "models": models,
+                "loaded": bool(active),
+                "gpu_accelerated": size_vram > 0,
+                "size_vram": size_vram,
+            }
         except Exception as exc:
             return {"available": False, "endpoint": self.endpoint, "model": self.model, "error": str(exc)[:300]}
 
@@ -74,11 +97,17 @@ class LocalModelGateway:
         timeout_seconds: int = 180,
     ) -> Iterator[dict[str, Any]]:
         """Yield local Ollama tokens and a final usage event without buffering the answer."""
+        lowered = message.lower()
+        concise = "short sentence" in lowered or "one sentence" in lowered or "brief answer" in lowered
+        options: dict[str, Any] = {"num_predict": 64 if concise else 512, "temperature": 0.2, "num_ctx": 4096}
+        if concise:
+            options["stop"] = ["\n", ". "]
         body = {
             "model": self.model,
             "prompt": self._executive_prompt(message, project_context),
             "stream": True,
             "keep_alive": -1,
+            "options": options,
         }
         with requests.post(
             f"{self.endpoint}/api/generate",
@@ -88,6 +117,7 @@ class LocalModelGateway:
         ) as response:
             response.raise_for_status()
             saw_done = False
+            emitted_parts: list[str] = []
             for raw_line in response.iter_lines():
                 if not raw_line:
                     continue
@@ -96,9 +126,13 @@ class LocalModelGateway:
                     raise RuntimeError(str(payload["error"])[:500])
                 token = str(payload.get("response", ""))
                 if token:
+                    emitted_parts.append(token)
                     yield {"type": "token", "content": token}
                 if payload.get("done"):
                     saw_done = True
+                    final_text = "".join(emitted_parts).rstrip()
+                    if concise and final_text and not final_text.endswith((".", "!", "?")):
+                        yield {"type": "token", "content": "."}
                     yield {
                         "type": "done",
                         "tokens": int(payload.get("eval_count", 0)),

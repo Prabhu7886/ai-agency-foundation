@@ -81,7 +81,7 @@ The Aegis layer keeps these inherited controls active:
 - New project paths must fall under `AI_AGENCY_HOME` or an explicit `AEGIS_PROJECT_ROOTS` entry.
 - GitHub repository links must be HTTPS GitHub URLs.
 - Public research rejects likely secrets and private/client data patterns.
-- Approved research still cannot execute while `AI_AGENCY_OFFLINE_MODE=true`.
+- A consumed, single-use owner approval can activate only the bounded public-research or GitHub-maintenance adapter while `AI_AGENCY_OFFLINE_MODE=true`; global offline mode remains authoritative elsewhere.
 - API documentation is disabled unless `AEGIS_ENABLE_API_DOCS=true`.
 - Voice is push-to-talk and local-only; the MVP does not upload or claim to transcribe audio.
 
@@ -91,7 +91,7 @@ Local models own routine planning, analysis, private project context, and agent 
 
 Codex should be integrated through an explicit adapter, using either its local SDK/app-server interface or a controlled GitHub handoff. A plugin toggle alone must never impersonate a Codex login or claim that a Codex task ran.
 
-GitHub is the main external code launchpad. The intended policy is branch-based work, automated checks, draft pull requests, and human merge. The engineering adapter must remain limited to registered repositories and must never merge or change protection rules silently.
+GitHub is the main external code launchpad. The implemented adapter verifies the registered origin and current `codex/` branch, stages only explicit project-relative paths, and supports commits, branch pushes, and draft pull requests after single-use owner approval. It exposes no merge, delete, force-push, arbitrary-shell, or branch-protection mutation path.
 
 Gemini is optional. Subscription access and API access are separate products, so the adapter must verify an authorized API path and must not assume that a browser subscription supplies application credentials.
 
@@ -113,6 +113,9 @@ Implemented in the first vertical slice:
 - Local Ollama chat with no cloud fallback.
 - Agent, skill, and plugin registries.
 - Approval-gated plugin and public-research requests.
+- Controlled GitHub maintenance with registered-origin enforcement and single-use execution approvals.
+- Bounded full-page HTML/PDF source verification with publication-date provenance, methodology signals, and content hashes.
+- Streaming AI responses with encrypted conversation history and rewrite/first-token latency evidence.
 - Foundation status and local model health.
 - Opportunity 80/20 and solution-stage surfaces.
 - Push-to-talk browser capture boundary.
@@ -121,12 +124,12 @@ Implemented in the first vertical slice:
 
 Next implementation slices:
 
-1. GitHub adapter for registered repositories, branches, checks, and draft pull requests.
-2. Codex engineering adapter with explicit login, per-task approval, redaction, and execution evidence.
-3. World Pulse ingestion, source reconciliation, freshness scoring, and scheduled briefings.
-4. Local speech-to-text and text-to-speech behind the existing push-to-talk boundary.
-5. Data Lab provenance, reversible cleaning recipes, and quality reports.
-6. Agent/skill package format, evaluation gates, version promotion, and rollback.
+1. Add claim-level corroboration across full-page research evidence and scheduled World Pulse briefings.
+2. Complete Codex engineering authentication, redaction, and execution-evidence workflows.
+3. Add branch-check visibility and approval-gated review preparation without automated merge.
+4. Complete local speech-to-text behind the existing push-to-talk boundary.
+5. Expand Data Lab profiling, reversible recipes, and quality reports.
+6. Finish the agent/skill package format, evaluation gates, version promotion, and rollback.
 7. Opportunity and Solution workflows backed by evidence, experiments, budgets, and measured outcomes.
 
 Each slice must add tests and pass Security Sentinel review before it can receive broader permissions.

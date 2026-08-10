@@ -10,6 +10,7 @@ export type PromptCompilation = {
   success_evidence?: string[];
   compiler_mode: string;
   model?: string | null;
+  rewrite_duration_ms?: number;
   created_at?: string;
 };
 export type Project = {
@@ -141,9 +142,22 @@ export type ResearchReport = {
     further_questions: string[];
     caveats: string[];
     source_metrics: Record<string, unknown>;
-    sources: Array<{ id: string; title: string; url: string; domain: string; source_tier: string; verification_state: string; confidence: number; published_at?: string | null; freshness_state?: string }>;
+    sources: Array<{ id: string; title: string; url: string; domain: string; source_tier: string; verification_state: string; confidence: number; published_at?: string | null; freshness_state?: string; page_verification_state?: string; date_source?: string | null; methodology_terms?: string[] }>;
   };
 };
+export type GitHubStatus = {
+  installed: boolean;
+  authenticated?: boolean | null;
+  remote_verification: string;
+  repository_url?: string | null;
+  git?: {
+    available: boolean;
+    branch: string;
+    clean: boolean;
+    origin_matches_registered: boolean;
+  };
+};
+export type GitHubAction = "verify_auth" | "create_branch" | "stage_files" | "commit" | "push" | "draft_pr";
 export type Bootstrap = {
   brand: { name: string; descriptor: string; motto: string; creed: string };
   workspaces: Workspace[];
@@ -166,5 +180,6 @@ export type Bootstrap = {
   solutions: Array<Record<string, unknown>>;
   activity: Activity[];
   foundation: Record<string, unknown>;
-  local_model: { available: boolean; model: string; endpoint: string; error?: string };
+  local_model: { available: boolean; model: string; endpoint: string; loaded?: boolean; gpu_accelerated?: boolean; size_vram?: number; error?: string };
+  integrations: { github: GitHubStatus; codex: Record<string, unknown> };
 };

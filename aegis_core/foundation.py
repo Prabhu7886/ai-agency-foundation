@@ -64,6 +64,14 @@ class FoundationGuard:
         # requires a sanitized query and a consumed, single-use approval record.
         return bool(self.security.get("data_handling", {}).get("approved_public_research_sessions", True))
 
+    def approved_github_maintenance_enabled(self) -> bool:
+        """Allow bounded GitHub network access only after a single-use owner approval."""
+        github = self.security.get("github", {})
+        return bool(
+            github.get("controlled_maintenance_enabled", False)
+            and github.get("require_single_use_approval", True)
+        )
+
     def allowed_project_roots(self) -> list[Path]:
         configured = [item.strip() for item in os.getenv("AEGIS_PROJECT_ROOTS", "").split(";") if item.strip()]
         roots = [Path(item).expanduser().resolve() for item in configured]
@@ -109,6 +117,11 @@ class FoundationGuard:
                 else "blocked_offline"
                 if offline
                 else "approved_session_only"
+            ),
+            "github_maintenance": (
+                "single_use_approval"
+                if self.approved_github_maintenance_enabled()
+                else "blocked"
             ),
             "sqlcipher_required": bool(self.security.get("encryption", {}).get("sqlcipher_required", True)),
             "vector_store_mode": vector.get("mode", "embedded_only"),

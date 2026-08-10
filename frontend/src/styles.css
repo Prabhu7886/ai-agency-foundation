@@ -174,6 +174,7 @@ body::before {
 .ai-archived-actions button { min-height: 31px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.025); color: #9cabbd; font-size: 9px; cursor: pointer; }
 .span-8 { grid-column: span 8; }
 .span-4 { grid-column: span 4; }
+.span-12 { grid-column: span 12; }
 .hero-card, .panel, .metric-card, .allocation-panel, .source-policy, .security-grid article { border: 1px solid var(--line); border-radius: 18px; background: var(--panel); backdrop-filter: blur(16px); }
 .hero-card { position: relative; min-height: 235px; overflow: hidden; padding: 32px; display: flex; flex-direction: column; justify-content: center; }
 .hero-card__glow { position: absolute; width: 420px; height: 420px; right: -100px; top: -180px; background: radial-gradient(circle, rgba(34,211,238,.17), transparent 62%); pointer-events: none; }
@@ -236,6 +237,22 @@ body::before {
 .activity-list > div:not(:last-child)::before { content: ""; position: absolute; left: 3px; top: 15px; width: 1px; height: 31px; background: var(--line); }
 .activity-list p { margin: 0; font-size: 10px; color: #aeb9c9; display: grid; }
 .activity-list small { color: #536075; margin-top: 4px; }
+.github-maintenance { display: grid; gap: 15px; }
+.github-maintenance .panel-header { margin-bottom: 0; }
+.github-status-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px; }
+.github-status-grid article { display: grid; gap: 5px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.018); }
+.github-status-grid span { color: #5f6f84; font-size: 8px; text-transform: uppercase; letter-spacing: .08em; }
+.github-status-grid strong { color: #c5d1df; font: 600 11px "Bahnschrift", "Segoe UI", sans-serif; }
+.github-operation-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.github-operation-tabs button { border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.02); color: #8290a4; min-height: 31px; padding: 0 12px; font-size: 9px; cursor: pointer; }
+.github-operation-tabs button.active { border-color: rgba(34,211,238,.35); color: var(--cyan); background: var(--cyan-soft); }
+.github-operation-form { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; align-items: end; }
+.github-operation-form label { display: grid; gap: 6px; color: #7d8ca0; font-size: 9px; }
+.github-operation-form input, .github-operation-form textarea { width: 100%; border: 1px solid var(--line); border-radius: 9px; background: rgba(3,8,14,.52); color: #e6eef8; padding: 10px; outline: none; resize: vertical; }
+.github-operation-form label:has(textarea), .github-operation-policy { grid-column: 1 / -1; }
+.github-operation-policy { display: flex; align-items: center; gap: 8px; color: #6f7e92; font-size: 9px; line-height: 1.5; }
+.github-operation-policy svg { flex: 0 0 auto; color: var(--green); }
+.github-operation-form .primary-button { min-width: 150px; }
 
 .single-workspace { max-width: 1280px; margin: 0 auto; }
 .workspace-intro { min-height: 190px; padding: 20px 24px 30px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); margin-bottom: 22px; }
@@ -397,7 +414,7 @@ body::before {
 .launch-screen--error p { max-width: 520px; text-align: center; color: #9eacbe; }
 
 @media (max-width: 1100px) {
-  .span-8, .span-4 { grid-column: span 12; }
+  .span-8, .span-4, .span-12 { grid-column: span 12; }
   .metric-stack { grid-template-columns: repeat(4, 1fr); }
   .metric-card { min-height: 90px; }
   .card-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
@@ -419,6 +436,9 @@ body::before {
   .hero-card { padding: 25px; }
   .hero-card::after { display: none; }
   .card-grid, .approval-list, .security-grid { grid-template-columns: 1fr; }
+  .github-status-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .github-operation-form { grid-template-columns: 1fr; }
+  .github-operation-form .primary-button { width: 100%; }
   .workspace-intro { padding: 14px 4px 22px; min-height: 160px; }
   .intro-icon { width: 70px; height: 70px; margin: 0; }
   .allocation-panel { grid-template-columns: 1fr; }

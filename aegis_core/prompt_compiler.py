@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from time import perf_counter
 from typing import Any
 
 from aegis_core.model_gateway import LocalModelGateway
@@ -19,7 +20,8 @@ execution_steps (array of strings), risk_level (low|medium|high|critical), appro
 (array of strings), success_evidence (array of strings), data_classification
 (public|internal|confidential|restricted), and compiled_prompt (string). The compiled_prompt must be
 self-contained, concise, factual, and tell the executor to stop for missing choices that materially
-change the outcome.
+change the outcome. Keep the entire JSON response under 300 words: at most 5 execution steps, 5
+constraints, 4 context items, and 4 success-evidence items.
 """.strip()
 
 
@@ -32,8 +34,12 @@ class PromptCompiler:
         re.IGNORECASE,
     )
     MEDIUM_RISK = re.compile(
-        r"\b(create|write|edit|commit|push|pull request|github|install|download|email|message|"
+        r"\b(create|write|edit|commit|push|pull request|install|download|email|message|"
         r"publish|upload|web search|research|scrape|browser)\b",
+        re.IGNORECASE,
+    )
+    INFORMATIONAL = re.compile(
+        r"^(reply|answer|confirm|explain|summarize|describe|list|compare|what|why|how|when|where|who|is|are|can|could|would)\b",
         re.IGNORECASE,
     )
 
@@ -41,29 +47,32 @@ class PromptCompiler:
         self.gateway = gateway
 
     def compile(self, original_prompt: str, project_context: dict[str, Any]) -> dict[str, Any]:
+        started = perf_counter()
         original = " ".join(original_prompt.replace("\x00", " ").split())
         minimum_risk = self._minimum_risk(original)
         prompt = (
             f"{PROMPT_COMPILER_INSTRUCTIONS}\n\n"
-            f"PROJECT CONTEXT:\n{json.dumps(project_context, ensure_ascii=False, default=str)[:8000]}\n\n"
+            f"PROJECT CONTEXT:\n{json.dumps(project_context, ensure_ascii=False, default=str)[:4000]}\n\n"
             f"OWNER REQUEST:\n{original}"
         )
         try:
             response = self.gateway.generate(
                 prompt,
                 json_mode=True,
-                timeout_seconds=120,
-                options={"num_predict": 512, "temperature": 0.1, "num_ctx": 4096},
+                timeout_seconds=75,
+                options={"num_predict": 320, "temperature": 0.0, "num_ctx": 3072},
             )
             compiled = json.loads(str(response.get("response", "{}")))
             result = self._normalize(compiled, original, minimum_risk)
             result["compiler_mode"] = "ollama-local"
             result["model"] = self.gateway.model
+            result["rewrite_duration_ms"] = round((perf_counter() - started) * 1000)
             return result
         except Exception:
             result = self._fallback(original, project_context, minimum_risk)
             result["compiler_mode"] = "deterministic-fallback"
             result["model"] = None
+            result["rewrite_duration_ms"] = round((perf_counter() - started) * 1000)
             return result
 
     @classmethod
@@ -73,6 +82,14 @@ class PromptCompiler:
         if cls.MEDIUM_RISK.search(prompt):
             return "medium"
         return "low"
+
+    @classmethod
+    def _is_informational(cls, prompt: str) -> bool:
+        return bool(
+            cls.INFORMATIONAL.search(prompt)
+            and not cls.HIGH_RISK.search(prompt)
+            and not cls.MEDIUM_RISK.search(prompt)
+        )
 
     @staticmethod
     def _risk_rank(value: str) -> int:
@@ -86,39 +103,41 @@ class PromptCompiler:
             risk = minimum_risk
         if self._risk_rank(risk) < self._risk_rank(minimum_risk):
             risk = minimum_risk
-        objective = str(value.get("objective") or original)[:1000]
-        deliverable = str(value.get("deliverable") or "A factual response with evidence")[:1000]
-        steps = self._string_list(value.get("execution_steps")) or ["Analyze the request", "Produce the deliverable", "Verify the result"]
+        objective = str(value.get("objective") or original)[:500]
+        deliverable = str(value.get("deliverable") or "A factual response with evidence")[:500]
+        context = self._string_list(value.get("context"), 4)
+        constraints = self._string_list(value.get("constraints"), 5)
+        steps = self._string_list(value.get("execution_steps"), 5) or ["Analyze the request", "Produce the deliverable", "Verify the result"]
         approvals = self._string_list(value.get("approvals_required"))
         if risk in {"high", "critical"} and not approvals:
             approvals = ["Owner approval before consequential execution"]
-        evidence = self._string_list(value.get("success_evidence")) or ["Result addresses the stated objective", "Unknowns are labeled"]
+        evidence = self._string_list(value.get("success_evidence"), 4) or ["Result addresses the stated objective", "Unknowns are labeled"]
         classification = str(value.get("data_classification", "internal")).lower()
         if classification not in {"public", "internal", "confidential", "restricted"}:
             classification = "internal"
-        compiled_prompt = str(value.get("compiled_prompt") or "").strip()
-        if not compiled_prompt:
-            compiled_prompt = self._compiled_text(original, objective, deliverable, steps, approvals, evidence)
-        else:
-            # The local rewrite may accidentally omit a number, qualifier, or explicit
-            # prohibition. Keep the rewritten contract useful, but make the owner's
-            # normalized request authoritative and visible to every executor.
-            compiled_prompt = (
-                f"OWNER INTENT (authoritative; preserve every constraint): {original}\n\n"
-                f"REWRITTEN EXECUTION CONTRACT:\n{compiled_prompt}"
-            )
+        if self._is_informational(original):
+            risk = "low"
+            approvals = []
+            steps = ["Answer the owner's question directly from supplied verified context"]
+            format_constraint = "Follow the owner's requested length and format exactly"
+            if format_constraint not in constraints:
+                constraints.append(format_constraint)
+        # The local model supplies the structured rewrite, while Aegis renders the final
+        # contract deterministically. This keeps owner intent authoritative and avoids a
+        # second model call receiving a long, repetitive free-form compiler response.
+        compiled_prompt = self._compiled_text(original, objective, deliverable, steps, approvals, evidence, constraints)
         return {
             "original_prompt": original,
             "objective": objective,
             "deliverable": deliverable,
-            "context": self._string_list(value.get("context")),
-            "constraints": self._string_list(value.get("constraints")),
+            "context": context,
+            "constraints": constraints,
             "execution_steps": steps,
             "risk_level": risk,
             "approvals_required": approvals,
             "success_evidence": evidence,
             "data_classification": classification,
-            "compiled_prompt": compiled_prompt[:50_000],
+            "compiled_prompt": compiled_prompt[:8_000],
         }
 
     def _fallback(self, original: str, project: dict[str, Any], risk: str) -> dict[str, Any]:
@@ -138,21 +157,39 @@ class PromptCompiler:
             "approvals_required": approvals,
             "success_evidence": evidence,
             "data_classification": "internal",
-            "compiled_prompt": self._compiled_text(original, objective, deliverable, steps, approvals, evidence),
+            "compiled_prompt": self._compiled_text(
+                original,
+                objective,
+                deliverable,
+                steps,
+                approvals,
+                evidence,
+                ["Do not expand authority", "Do not claim unverified work", "Protect private data"],
+            ),
         }
 
     @staticmethod
-    def _compiled_text(original: str, objective: str, deliverable: str, steps: list[str], approvals: list[str], evidence: list[str]) -> str:
+    def _compiled_text(
+        original: str,
+        objective: str,
+        deliverable: str,
+        steps: list[str],
+        approvals: list[str],
+        evidence: list[str],
+        constraints: list[str] | None = None,
+    ) -> str:
         return (
-            f"OWNER INTENT (preserve exactly): {original}\n\nOBJECTIVE: {objective}\n"
+            f"OWNER INTENT (authoritative; preserve every constraint): {original}\n\n"
+            f"REWRITTEN EXECUTION CONTRACT:\nOBJECTIVE: {objective}\n"
             f"DELIVERABLE: {deliverable}\nEXECUTION STEPS:\n- " + "\n- ".join(steps)
+            + ("\nCONSTRAINTS:\n- " + "\n- ".join(constraints) if constraints else "")
             + ("\nAPPROVALS REQUIRED:\n- " + "\n- ".join(approvals) if approvals else "")
             + "\nSUCCESS EVIDENCE:\n- " + "\n- ".join(evidence)
-            + "\nStop and ask the owner if a missing choice would materially change the outcome."
+            + "\nAsk the owner only if a genuinely missing choice would materially change the requested outcome; otherwise proceed with labeled assumptions."
         )
 
     @staticmethod
-    def _string_list(value: Any) -> list[str]:
+    def _string_list(value: Any, maximum_items: int = 8) -> list[str]:
         if not isinstance(value, list):
             return []
-        return [str(item).strip()[:1000] for item in value if str(item).strip()][:50]
+        return [str(item).strip()[:300] for item in value if str(item).strip()][:maximum_items]

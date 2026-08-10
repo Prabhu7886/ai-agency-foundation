@@ -151,7 +151,7 @@ class CodexAppServerAdapter:
         self._reader.start()
         self._request(
             "initialize",
-            {"clientInfo": {"name": "aegis_local_executive", "title": "Aegis", "version": "0.4.0"}},
+            {"clientInfo": {"name": "aegis_local_executive", "title": "Aegis", "version": "0.5.0"}},
             timeout=30,
         )
         self._notify("initialized", {})

@@ -10,7 +10,7 @@ Aegis is a local-first AI agency orchestrator, security guardian, intelligence o
 - ChromaDB must reside on an encrypted filesystem volume. On Windows, the startup audit verifies BitLocker.
 - ChromaDB runs embedded only; its HTTP server is prohibited. See `SECURITY.md` for the narrowly scoped `CVE-2026-45829` mitigation.
 - The local hash embedding function does not download a model or emit telemetry.
-- External research is disabled by default. An approved research session requires `AI_AGENCY_OFFLINE_MODE=false`.
+- External research is disabled by default. A consumed, single-use approval can open only the bounded public-research adapter while global offline mode stays enabled.
 - Public research queries reject common client-data and secret patterns; outbound destinations are logged.
 - Telegram requires a numeric user-ID whitelist. Deployment and shutdown require a short-lived confirmation code.
 - Security controls are evidence-based. The dashboard and audit logs distinguish configured controls from verified controls.
@@ -111,11 +111,11 @@ Open `http://127.0.0.1:8000`. The workspace provides Executive Home, Agent Fleet
 
 Every executable user request passes through the Aegis prompt compiler first. Aegis keeps the original prompt, produces a bounded execution contract, classifies data and risk, states required approvals and success evidence, and never lets rewriting expand the user's authority. If Ollama is unavailable, a conservative deterministic compiler is used.
 
-Engineering integrations are deliberately narrow. GitHub supports only named branch, commit, push, and draft-PR operations on a registered project; network operations and every Codex turn require Approval Center authorization. The Codex integration uses the official local `codex app-server` JSONL protocol with a registered workspace root and network disabled by default. World Pulse stores source tier, retrieval time, verification state, and confidence instead of presenting a single-source claim as verified.
+Engineering integrations are deliberately narrow. GitHub supports authentication attestation, `codex/` branch creation, explicit-file staging, commits, pushes, and draft pull requests on the registered repository; every operation is single-use and approval-gated. Merge, delete, force-push, arbitrary shell, and unregistered repositories are unavailable. The Codex integration uses the official local `codex app-server` JSONL protocol with a registered workspace root and network disabled by default. World Pulse stores source tier, retrieval time, full-page verification state, publication-date provenance, methodology signals, and confidence instead of presenting a single-source claim as verified.
 
 Data Lab currently accepts CSV files up to 50 MB inside a registered project. It hashes the approved input, writes a new cleaned copy under `exports/aegis-data`, and records a QA/provenance report without overwriting raw data. Voice Lounge uses Windows SAPI for local speech output; install `faster-whisper` separately to enable local speech-to-text. Audio is never sent to a cloud speech provider and temporary recordings are deleted after transcription.
 
-Set `AEGIS_PROJECT_ROOTS` to a semicolon-separated list of additional absolute project roots when Aegis needs to register code outside `AI_AGENCY_HOME`. The API refuses non-loopback clients and remote Ollama endpoints. Web research remains disabled while `AI_AGENCY_OFFLINE_MODE=true`, even after an individual research request is approved.
+Set `AEGIS_PROJECT_ROOTS` to a semicolon-separated list of additional absolute project roots when Aegis needs to register code outside `AI_AGENCY_HOME`. The API refuses non-loopback clients and remote Ollama endpoints. With `AI_AGENCY_OFFLINE_MODE=true`, only a consumed Approval Center record can activate the bounded public-research or GitHub-maintenance adapter; it does not disable global offline mode.
 
 See `docs/AEGIS_ARCHITECTURE.md` for boundaries, integration policy, and the implementation roadmap. Brand assets and logo directions are in `docs/brand/`.
 

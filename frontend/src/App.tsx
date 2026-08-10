@@ -57,15 +57,17 @@ import {
   deleteConversation,
   decideApproval,
   executeResearch,
+  executeGitHubOperation,
   getConversation,
   requestResearch,
+  requestGitHubOperation,
   requestDataJob,
   restoreConversation,
   speakVoice,
   streamChat,
   transcribeVoice,
 } from "./api";
-import type { Agent, Approval, Bootstrap, Conversation, ConversationMessage, Plugin, Project, Skill, Workspace } from "./types";
+import type { Agent, Approval, Bootstrap, Conversation, ConversationMessage, GitHubAction, GitHubStatus, Plugin, Project, Skill, Workspace } from "./types";
 
 const workspaceIcons: Record<string, ReactNode> = {
   "executive-home": <CircleGauge size={17} />,
@@ -167,8 +169,15 @@ export default function App() {
       if (decision === "approved" && item.action === "public_web_research") {
         return executeResearch(item.id);
       }
+      if (decision === "approved" && item.action === "github_operation") {
+        return executeGitHubOperation(item.id);
+      }
       return undefined;
-    }, decision === "approved" && item.action === "public_web_research" ? "Research completed and report saved" : `Approval ${decision}`);
+    }, decision === "approved" && item.action === "public_web_research"
+      ? "Research completed and report saved"
+      : decision === "approved" && item.action === "github_operation"
+        ? "Approved GitHub operation completed"
+        : `Approval ${decision}`);
   };
 
   if (loading) {
@@ -244,7 +253,7 @@ export default function App() {
         <div className="sidebar__footer">
           <div className={`model-indicator ${data.local_model.available ? "online" : "offline"}`}>
             <span />
-            <div><strong>{data.local_model.model}</strong><small>{data.local_model.available ? "Local model ready" : "Local model offline"}</small></div>
+            <div><strong>{data.local_model.model}</strong><small>{data.local_model.available ? data.local_model.gpu_accelerated ? "RTX accelerated · local" : "CPU local · slower" : "Local model offline"}</small></div>
           </div>
         </div>
       </aside>
@@ -265,7 +274,12 @@ export default function App() {
 
         <section className="workspace-stage">
           {activeWorkspace === "executive-home" && (
-            <ExecutiveHome data={data} project={selectedProject} onChat={(message) => mutate(() => chat(selectedProject!.id, message), "Aegis completed the local turn")} />
+            <ExecutiveHome
+              data={data}
+              project={selectedProject}
+              onChat={(message) => mutate(() => chat(selectedProject!.id, message), "Aegis completed the local turn")}
+              onGitHub={(payload) => mutate(() => requestGitHubOperation(payload), "GitHub operation sent to Approval Center")}
+            />
           )}
           {activeWorkspace === "ai-workspace" && <AIWorkspace project={selectedProject} conversations={data.conversations} onRefresh={() => refresh(true)} />}
           {activeWorkspace === "agent-fleet" && (
@@ -417,7 +431,11 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
           setMessages((current) => current.map((item) => item.id === optimisticAssistantId ? { ...item, content: item.content + event.content } : item));
         } else if ((event.type === "done" || event.type === "error") && event.assistant_message) {
           setMessages((current) => current.map((item) => item.id === optimisticAssistantId ? event.assistant_message! : item));
-          setStreamStatus(event.type === "error" ? event.detail ?? "Local stream failed safely" : "");
+          setStreamStatus(event.type === "error"
+            ? event.detail ?? "Local stream failed safely"
+            : event.timings
+              ? `Ready in ${(event.timings.total_ms / 1000).toFixed(1)}s · rewrite ${(event.timings.prompt_rewrite_ms / 1000).toFixed(1)}s · first token ${event.timings.first_token_ms === null ? "n/a" : `${(event.timings.first_token_ms / 1000).toFixed(1)}s`}`
+              : "");
         }
       });
       await onRefresh();
@@ -500,7 +518,7 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
       <section className="ai-conversation">
         {loadingConversation ? <div className="ai-message ai-message--aegis ai-message--thinking"><div className="ai-avatar ai-avatar--aegis"><BrainCircuit size={14} /></div><div><span>Aegis</span><div className="ai-thinking"><i /><i /><i /> Decrypting local conversation…</div></div></div> : messages.length === 0 ? <div className="ai-welcome"><div className="ai-welcome__mark"><BrainCircuit size={30} /></div><h3>What are we building?</h3><p>Discuss an idea, analyze a market, make a plan, or prepare a coding task. Every turn is rewritten into a bounded execution contract and saved only in the encrypted local database.</p><div className="ai-starters">{["Turn my idea into a practical plan", "Analyze a business opportunity", "Help me design a secure feature"].map((starter) => <button key={starter} onClick={() => setMessage(starter)}>{starter}<ChevronRight size={13} /></button>)}</div></div> : messages.map((item) => <article className="ai-turn" key={item.id}>
           <div className={`ai-message ${item.role === "user" ? "ai-message--owner" : "ai-message--aegis"}`}><div className={`ai-avatar ${item.role === "user" ? "ai-avatar--owner" : "ai-avatar--aegis"}`}>{item.role === "user" ? "S" : <BrainCircuit size={14} />}</div><div className={item.role === "assistant" ? "ai-response" : ""}><span>{item.role === "user" ? "You" : "Aegis"} · {item.provider ?? "local"} · {new Date(item.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>{item.content ? <p>{item.content}{item.streaming && <i className="stream-cursor" />}</p> : item.streaming ? <div className="ai-thinking"><i /><i /><i /> {streamStatus || "Thinking locally…"}</div> : null}{item.error && <small>{item.error}</small>}{item.role === "assistant" && item.content && <div className="ai-message-actions"><button onClick={() => void copyAnswer(item)} title="Copy response">{copiedId === item.id ? <Check size={13} /> : <Copy size={13} />} {copiedId === item.id ? "Copied" : "Copy"}</button></div>}</div></div>
-          {item.compilation && <details className="prompt-contract ai-contract"><summary><Sparkles size={11} /> View rewritten execution contract · {item.compilation.risk_level} risk</summary><div><label>Objective</label><p>{item.compilation.objective}</p><label>Compiled prompt</label><pre>{item.compilation.compiled_prompt}</pre><footer><span>{item.compilation.compiler_mode}</span><span>{item.compilation.data_classification}</span></footer></div></details>}
+          {item.compilation && <details className="prompt-contract ai-contract"><summary><Sparkles size={11} /> View rewritten execution contract · {item.compilation.risk_level} risk</summary><div><label>Objective</label><p>{item.compilation.objective}</p><label>Compiled prompt</label><pre>{item.compilation.compiled_prompt}</pre><footer><span>{item.compilation.compiler_mode}{item.compilation.rewrite_duration_ms ? ` · ${(item.compilation.rewrite_duration_ms / 1000).toFixed(1)}s rewrite` : ""}</span><span>{item.compilation.data_classification}</span></footer></div></details>}
         </article>)}
         {streamStatus && !sending && <div className="ai-stream-status">{streamStatus}</div>}
         <div ref={conversationEnd} />
@@ -510,7 +528,12 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
   </div>;
 }
 
-function ExecutiveHome({ data, project, onChat }: { data: Bootstrap; project: Project | null; onChat: (message: string) => Promise<void> }) {
+function ExecutiveHome({ data, project, onChat, onGitHub }: {
+  data: Bootstrap;
+  project: Project | null;
+  onChat: (message: string) => Promise<void>;
+  onGitHub: (payload: Parameters<typeof requestGitHubOperation>[0]) => Promise<void>;
+}) {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const submit = async (event: FormEvent) => {
@@ -588,8 +611,63 @@ function ExecutiveHome({ data, project, onChat }: { data: Bootstrap; project: Pr
           ))}
         </div>
       </section>
+      <GitHubMaintenance
+        project={project}
+        status={data.integrations.github}
+        connectionStatus={data.plugins.find((item) => item.id === "plugin-github")?.connection_status ?? "not_connected"}
+        onRequest={onGitHub}
+      />
     </div>
   );
+}
+
+function GitHubMaintenance({ project, status, connectionStatus, onRequest }: {
+  project: Project | null;
+  status: GitHubStatus;
+  connectionStatus: string;
+  onRequest: (payload: Parameters<typeof requestGitHubOperation>[0]) => Promise<void>;
+}) {
+  const [action, setAction] = useState<GitHubAction>("verify_auth");
+  const [branch, setBranch] = useState(status.git?.branch?.startsWith("codex/") ? status.git.branch : "codex/aegis-next");
+  const [paths, setPaths] = useState("");
+  const [message, setMessage] = useState("Update Aegis controlled maintenance");
+  const [title, setTitle] = useState("Update Aegis controlled maintenance");
+  const [body, setBody] = useState("## Summary\n\nApproval-gated Aegis maintenance update.\n\n## Validation\n\n- Tests required before review");
+  const [submitting, setSubmitting] = useState(false);
+  const operations: Array<[GitHubAction, string]> = [
+    ["verify_auth", "Verify"], ["create_branch", "Branch"], ["stage_files", "Stage"],
+    ["commit", "Commit"], ["push", "Push"], ["draft_pr", "Draft PR"],
+  ];
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!project || submitting) return;
+    const payload: Parameters<typeof requestGitHubOperation>[0] = { project_id: project.id, action };
+    if (["create_branch", "push", "draft_pr"].includes(action)) payload.branch = branch.trim();
+    if (action === "stage_files") payload.paths = paths.split(/[\n,]+/).map((item) => item.trim()).filter(Boolean);
+    if (action === "commit") payload.message = message.trim();
+    if (action === "draft_pr") Object.assign(payload, { title: title.trim(), body: body.trim(), base: "main" });
+    setSubmitting(true);
+    try { await onRequest(payload); } finally { setSubmitting(false); }
+  };
+  const needsBranch = ["create_branch", "push", "draft_pr"].includes(action);
+  return <section className="panel span-12 github-maintenance">
+    <PanelHeader icon={<TerminalSquare size={17} />} title="GitHub controlled maintenance" action={<StatusPill tone={connectionStatus === "connected" ? "safe" : "warning"}>{connectionStatus.replaceAll("_", " ")}</StatusPill>} />
+    <div className="github-status-grid">
+      <article><span>CLI</span><strong>{status.installed ? "Installed" : "Unavailable"}</strong></article>
+      <article><span>Branch</span><strong>{status.git?.branch || "Unknown"}</strong></article>
+      <article><span>Working tree</span><strong>{status.git?.clean ? "Clean" : "Changes present"}</strong></article>
+      <article><span>Registered origin</span><strong>{status.git?.origin_matches_registered ? "Matched" : "Blocked"}</strong></article>
+    </div>
+    <div className="github-operation-tabs">{operations.map(([value, label]) => <button key={value} type="button" className={action === value ? "active" : ""} onClick={() => setAction(value)}>{label}</button>)}</div>
+    <form className="github-operation-form" onSubmit={submit}>
+      {needsBranch && <label>Protected branch<input required pattern="codex/.+" value={branch} onChange={(event) => setBranch(event.target.value)} /></label>}
+      {action === "stage_files" && <label>Project-relative files<textarea required rows={3} value={paths} onChange={(event) => setPaths(event.target.value)} placeholder="aegis_core/api.py&#10;frontend/src/App.tsx" /></label>}
+      {action === "commit" && <label>Commit message<input required value={message} onChange={(event) => setMessage(event.target.value)} /></label>}
+      {action === "draft_pr" && <><label>Pull request title<input required value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>Pull request body<textarea required rows={5} value={body} onChange={(event) => setBody(event.target.value)} /></label></>}
+      <div className="github-operation-policy"><ShieldCheck size={16} /><span>Creates a single-use approval request. No merge, delete, force-push, arbitrary shell, or unregistered repository access is available.</span></div>
+      <button className="primary-button" disabled={!project || submitting || status.git?.origin_matches_registered !== true}>{submitting ? "Requesting approval…" : `Request ${operations.find(([value]) => value === action)?.[1]}`}</button>
+    </form>
+  </section>;
 }
 
 function Metric({ label, value, icon, accent = false }: { label: string; value: number; icon: ReactNode; accent?: boolean }) {
@@ -690,7 +768,7 @@ function OpportunityEngine({ data, project, onResearch, onCreate }: {
     <div className="source-policy"><ShieldCheck size={16} /><span>Public sources only. Each run requires approval, blocks private/client data, records citations, and produces an encrypted local report.</span></div>
     <div className="opportunity-summary-grid"><div className="allocation-panel"><div className="allocation-ring"><span><strong>80 / 20</strong><small>allocation</small></span></div><div><h3>Existing businesses</h3><div className="allocation-bar"><i style={{ width: "80%" }} /></div><p>80% improves and monetizes what we already own.</p><h3>Exploration</h3><div className="allocation-bar exploration"><i style={{ width: "20%" }} /></div><p>20% tests new AI opportunities with strict stop criteria.</p></div></div><div className="opportunity-metrics"><article><strong>{reports.length}</strong><span>Research reports</span></article><article><strong>{data.opportunities.length}</strong><span>Scored opportunities</span></article><article><strong>{reports.reduce((total, item) => total + item.source_count, 0)}</strong><span>Accepted sources</span></article></div></div>
     <section className="opportunity-section"><PanelHeader icon={<Radar size={17} />} title="Opportunity research reports" action={<StatusPill tone={reports.length ? "safe" : "neutral"}>{reports.length} ready</StatusPill>} />
-      {reports.length === 0 ? <EmptyState icon={<Radar />} title="No research report yet" body="Submit a public topic, approve it in Approval Center, and Aegis will return here with a source-backed executive report." /> : <div className="research-report-list">{reports.map((item) => <article className="research-report" key={item.id}><header><div><div className="eyebrow">PUBLIC RESEARCH · {new Date(item.created_at).toLocaleString()}</div><h3>{item.report.title}</h3></div><div className="report-badges"><StatusPill tone={item.report.quality_gate === "supported_discovery" ? "safe" : "warning"}>{item.report.quality_gate?.replaceAll("_", " ") ?? "legacy quality"}</StatusPill><StatusPill tone={item.independent_domains >= 2 ? "safe" : "warning"}>{item.source_count} sources · {item.independent_domains} domains</StatusPill></div></header><section><h4>Executive Summary</h4><ul>{item.report.executive_summary.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Key findings</h4><div className="report-findings">{item.report.key_findings.map((finding, index) => <article key={`${finding.headline}-${index}`}><div><StatusPill tone={finding.confidence >= .7 ? "safe" : "neutral"}>{Math.round(finding.confidence * 100)}% confidence</StatusPill><span>{finding.source_ids.join(", ")}</span></div><h5>{finding.headline}</h5><p>{finding.evidence}</p><small>{finding.implication}</small></article>)}</div></section><details><summary>Recommendations, questions, caveats, and sources</summary><div className="report-detail-grid"><section><h4>Recommended next steps</h4><ol>{item.report.recommended_next_steps.map((line) => <li key={line}>{line}</li>)}</ol></section><section><h4>Further questions</h4><ul>{item.report.further_questions.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Caveats</h4><ul>{item.report.caveats.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Sources</h4><div className="report-sources">{item.report.sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer"><span>{source.id} · {source.domain} · {source.source_tier} · {source.freshness_state ?? "unknown date"}</span>{source.title}<ArrowUpRight size={12} /></a>)}</div></section></div></details></article>)}</div>}
+      {reports.length === 0 ? <EmptyState icon={<Radar />} title="No research report yet" body="Submit a public topic, approve it in Approval Center, and Aegis will return here with a source-backed executive report." /> : <div className="research-report-list">{reports.map((item) => <article className="research-report" key={item.id}><header><div><div className="eyebrow">PUBLIC RESEARCH · {new Date(item.created_at).toLocaleString()}</div><h3>{item.report.title}</h3></div><div className="report-badges"><StatusPill tone={item.report.quality_gate === "supported_discovery" ? "safe" : "warning"}>{item.report.quality_gate?.replaceAll("_", " ") ?? "legacy quality"}</StatusPill><StatusPill tone={Number(item.report.source_metrics.verified_page_count ?? 0) > 0 ? "safe" : "warning"}>{Number(item.report.source_metrics.verified_page_count ?? 0)} full pages</StatusPill><StatusPill tone={item.independent_domains >= 2 ? "safe" : "warning"}>{item.source_count} sources · {item.independent_domains} domains</StatusPill></div></header><section><h4>Executive Summary</h4><ul>{item.report.executive_summary.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Key findings</h4><div className="report-findings">{item.report.key_findings.map((finding, index) => <article key={`${finding.headline}-${index}`}><div><StatusPill tone={finding.confidence >= .7 ? "safe" : "neutral"}>{Math.round(finding.confidence * 100)}% confidence</StatusPill><span>{finding.source_ids.join(", ")}</span></div><h5>{finding.headline}</h5><p>{finding.evidence}</p><small>{finding.implication}</small></article>)}</div></section><details><summary>Recommendations, questions, caveats, and sources</summary><div className="report-detail-grid"><section><h4>Recommended next steps</h4><ol>{item.report.recommended_next_steps.map((line) => <li key={line}>{line}</li>)}</ol></section><section><h4>Further questions</h4><ul>{item.report.further_questions.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Caveats</h4><ul>{item.report.caveats.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Sources</h4><div className="report-sources">{item.report.sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer"><span>{source.id} · {source.domain} · {source.source_tier} · {source.freshness_state ?? "unknown date"} · {source.page_verification_state?.replaceAll("_", " ") ?? "legacy excerpt"}{source.methodology_terms?.length ? " · methodology signal" : ""}</span>{source.title}<ArrowUpRight size={12} /></a>)}</div></section></div></details></article>)}</div>}
     </section>
     <section className="opportunity-section"><PanelHeader icon={<CircleGauge size={17} />} title="Evidence-backed scorecard" action={<StatusPill>{data.opportunities.length} scored</StatusPill>} /><details className="manual-score"><summary><Plus size={13} /> Score a researched opportunity manually</summary><OpportunityCreateForm onCreate={onCreate} /></details>{data.opportunities.length === 0 ? <EmptyState icon={<Zap />} title="No unsupported promises" body="Score an opportunity only after the research report is reviewed and customer or pricing evidence is attached." /> : <div className="card-grid">{data.opportunities.map((item, index) => <article className="entity-card" key={index}><StatusPill tone="safe">{String(item.score)} / 100</StatusPill><h3>{String(item.title)}</h3><p>{String(item.thesis)}</p><small>{String(item.allocation)}</small></article>)}</div>}</section>
   </div>;
@@ -713,7 +791,7 @@ function ApprovalCenter({ approvals, onDecision }: { approvals: Approval[]; onDe
       setRunningId(null);
     }
   };
-  return <div className="single-workspace"><div className="workspace-intro compact"><div><div className="eyebrow">HUMAN AUTHORITY</div><h2>Nothing consequential<br /><span>happens in the dark.</span></h2></div><UserRoundCheck className="intro-icon" /></div>{pending.length === 0 ? <EmptyState icon={<Check />} title="Approval queue is clear" body="Aegis will surface evidence, risk, cost, and exact scope before asking." /> : <div className="approval-list">{pending.map((item) => <article key={item.id}><div><StatusPill tone={item.risk_level === "high" || item.risk_level === "critical" ? "danger" : "warning"}>{item.risk_level} risk</StatusPill><span>{timeAgo(item.requested_at)}</span></div><h3>{item.summary}</h3><p>Action: {item.action.replaceAll("_", " ")}</p><pre>{JSON.stringify(item.evidence, null, 2)}</pre><footer><button className="decline-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "declined")}><X size={15} /> Decline</button><button className="approve-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "approved")}>{runningId === item.id ? <Activity size={15} /> : <Check size={15} />} {runningId === item.id && item.action === "public_web_research" ? "Researching…" : item.action === "public_web_research" ? "Approve & run" : "Approve"}</button></footer></article>)}</div>}</div>;
+  return <div className="single-workspace"><div className="workspace-intro compact"><div><div className="eyebrow">HUMAN AUTHORITY</div><h2>Nothing consequential<br /><span>happens in the dark.</span></h2></div><UserRoundCheck className="intro-icon" /></div>{pending.length === 0 ? <EmptyState icon={<Check />} title="Approval queue is clear" body="Aegis will surface evidence, risk, cost, and exact scope before asking." /> : <div className="approval-list">{pending.map((item) => <article key={item.id}><div><StatusPill tone={item.risk_level === "high" || item.risk_level === "critical" ? "danger" : "warning"}>{item.risk_level} risk</StatusPill><span>{timeAgo(item.requested_at)}</span></div><h3>{item.summary}</h3><p>Action: {item.action.replaceAll("_", " ")}</p><pre>{JSON.stringify(item.evidence, null, 2)}</pre><footer><button className="decline-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "declined")}><X size={15} /> Decline</button><button className="approve-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "approved")}>{runningId === item.id ? <Activity size={15} /> : <Check size={15} />} {runningId === item.id && item.action === "public_web_research" ? "Researching…" : runningId === item.id && item.action === "github_operation" ? "Executing…" : item.action === "public_web_research" || item.action === "github_operation" ? "Approve & run" : "Approve"}</button></footer></article>)}</div>}</div>;
 }
 
 function SecuritySentinel({ data }: { data: Bootstrap }) {
@@ -722,8 +800,9 @@ function SecuritySentinel({ data }: { data: Bootstrap }) {
     ["SQLCipher", data.foundation.sqlcipher_required, "required"],
     ["Chroma", !data.foundation.chroma_server_enabled, String(data.foundation.vector_store_mode)],
     ["Cloud privacy", data.foundation.cloud_private_data === "blocked", String(data.foundation.cloud_private_data)],
-    ["Ollama", data.local_model.available, data.local_model.available ? data.local_model.model : "offline"],
+    ["Ollama", data.local_model.available && Boolean(data.local_model.gpu_accelerated), data.local_model.available ? `${data.local_model.model} · ${data.local_model.gpu_accelerated ? "RTX GPU" : "CPU fallback"}` : "offline"],
     ["External research", data.foundation.external_research === "approved_public_sessions", String(data.foundation.external_research)],
+    ["GitHub maintenance", data.foundation.github_maintenance === "single_use_approval", String(data.foundation.github_maintenance)],
   ];
   return <div className="single-workspace"><div className="workspace-intro security-intro"><div><div className="eyebrow">CONTINUOUS ASSURANCE</div><h2>Trust evidence.<br /><span>Verify everything.</span></h2><p>The foundation remains authoritative for encryption, local inference, data handling, approvals, and network boundaries.</p></div><ShieldCheck className="intro-icon" /></div><div className="security-grid">{controls.map(([name, passed, detail]) => <article key={String(name)} className={passed ? "passed" : "guarded"}><span>{passed ? <Check /> : <LockKeyhole />}</span><div><h3>{String(name)}</h3><p>{String(detail)}</p></div></article>)}</div><div className="panel policy-panel"><PanelHeader icon={<FileCode2 size={17} />} title="Inherited foundation" action={<StatusPill tone="safe">Enforced</StatusPill>} /><p>Every Aegis workspace, agent, skill, and plugin passes through the same SQLCipher, loopback, offline-mode, secret-redaction, and approval controls.</p></div></div>;
 }

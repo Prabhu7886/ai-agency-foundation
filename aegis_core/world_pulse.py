@@ -62,6 +62,15 @@ class WorldPulseService:
                 published_at=item["finding"].get("published_at"),
                 source={**source, "verification_state": verification},
             )
+            record.update(
+                {
+                    "page_verification_state": source.get("page_verification_state", "not_requested"),
+                    "date_source": source.get("date_source"),
+                    "methodology_terms": source.get("methodology_terms", []),
+                    "content_sha256": source.get("content_sha256"),
+                    "page_title": source.get("page_title"),
+                }
+            )
             accepted.append(record)
         return {"accepted": len(accepted), "rejected": rejected, "signals": accepted}
 
@@ -86,7 +95,12 @@ class WorldPulseService:
             "publisher": hostname.removeprefix("www.")[:200],
             "source_tier": source_tier,
             "published_at": finding.get("published_at"),
-            "retrieved_at": datetime.now(timezone.utc).isoformat(),
+            "retrieved_at": finding.get("retrieved_at") or datetime.now(timezone.utc).isoformat(),
+            "page_verification_state": finding.get("page_verification_state", "not_requested"),
+            "date_source": finding.get("date_source"),
+            "methodology_terms": finding.get("methodology_terms", []),
+            "content_sha256": finding.get("content_sha256"),
+            "page_title": finding.get("page_title"),
         }
 
     @classmethod

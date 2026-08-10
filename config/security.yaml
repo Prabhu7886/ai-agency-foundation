@@ -69,6 +69,17 @@ data_handling:
     - arxiv.org
     - producthunt.com
     - www.producthunt.com
+github:
+  controlled_maintenance_enabled: true
+  require_single_use_approval: true
+  branch_prefix: codex/
+  allowed_actions:
+    - verify_auth
+    - create_branch
+    - stage_files
+    - commit
+    - push
+    - draft_pr
 mobile:
   provider: telegram
   token_environment_variable: TELEGRAM_BOT_TOKEN

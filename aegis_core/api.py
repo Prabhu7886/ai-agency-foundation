@@ -8,6 +8,7 @@ import os
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import perf_counter
 from typing import Any, AsyncIterator
 
 from dotenv import load_dotenv
@@ -116,7 +117,7 @@ def create_app(
 
     app = FastAPI(
         title="Aegis Local Executive API",
-        version="0.4.0",
+        version="0.5.0",
         description="Local-first executive control plane built on the AI Agency security foundation.",
         lifespan=lifespan,
         docs_url="/api/docs" if os.getenv("AEGIS_ENABLE_API_DOCS", "false").lower() == "true" else None,
@@ -158,13 +159,12 @@ def create_app(
         store.finish_approval_execution(approval_id, "failed", str(exc))
 
     async def runtime_snapshot(project: dict[str, Any]) -> dict[str, Any]:
-        ollama_status, github_status, codex_status = await asyncio.gather(
-            asyncio.to_thread(model_gateway.health),
-            asyncio.to_thread(github.status, project),
-            asyncio.to_thread(codex.status, True),
-        )
+        plugins = {item["id"]: item for item in store.list_plugins()}
+        github_plugin = plugins.get("plugin-github", {})
+        codex_plugin = plugins.get("plugin-codex", {})
+        local_status = await asyncio.to_thread(model_gateway.health)
         return {
-            "version": "0.4.0",
+            "version": "0.5.0",
             "workspaces": [item["label"] for item in WORKSPACES],
             "overview": store.overview(),
             "agents": [
@@ -184,6 +184,7 @@ def create_app(
                 "conversation_context_message_limit": 12,
                 "loopback_only": True,
                 "cloud_private_data": "blocked",
+                "github_controlled_maintenance": guard.approved_github_maintenance_enabled(),
             },
             "implemented_capabilities": [
                 "Local Ollama chat with token streaming and automatic bounded prompt compilation",
@@ -191,32 +192,25 @@ def create_app(
                 "Single-use approval execution ledger with expiry",
                 "One-way task lifecycle enforcement",
                 "Approval-gated Codex and GitHub engineering adapters",
+                "Approval-gated GitHub staging, commits, branch pushes, and draft pull requests",
                 "Encrypted SQLCipher control-plane persistence",
                 "Audited project, agent, skill, and workspace inventory",
             ],
             "integrations": {
                 "ollama": {
-                    "state": "connected" if ollama_status.get("available") else "unavailable",
-                    "model": ollama_status.get("model"),
+                    "state": "connected" if local_status.get("available") else "unavailable",
+                    "model": model_gateway.model,
                     "loopback": True,
+                    "gpu_accelerated": bool(local_status.get("gpu_accelerated")),
                 },
                 "github": {
-                    "state": (
-                        "connected"
-                        if github_status.get("authenticated") is True
-                        else "not_authenticated"
-                        if github_status.get("authenticated") is False
-                        else "remote_auth_not_verified_offline"
-                    ),
-                    "cli_installed": github_status.get("installed", False),
+                    "state": github_plugin.get("connection_status", "not_connected"),
                     "repository_registered": bool(project.get("repository_url")),
-                    "remote_verification": github_status.get("remote_verification"),
+                    "operation_policy": "single_use_owner_approval",
                 },
                 "codex": {
-                    "state": "connected" if codex_status.get("connected") else "not_connected",
-                    "installed": codex_status.get("installed", False),
-                    "chatgpt_account_present": bool(codex_status.get("account")),
-                    "protocol": codex_status.get("protocol"),
+                    "state": codex_plugin.get("connection_status", "not_connected"),
+                    "operation_policy": "single_use_owner_approval",
                 },
             },
             "answering_rules": [
@@ -233,7 +227,7 @@ def create_app(
             "status": "ok",
             "local_only": True,
             "service": "aegis",
-            "version": "0.4.0",
+            "version": "0.5.0",
             "database": "sqlcipher-required",
             "prompt_compiler": "required",
         }
@@ -252,6 +246,8 @@ def create_app(
 
     @app.get("/api/bootstrap", dependencies=[Depends(require_session)])
     async def bootstrap() -> dict[str, Any]:
+        projects = store.list_projects()
+        github_project = projects[0] if projects else None
         return {
             "brand": {
                 "name": "Aegis",
@@ -261,7 +257,7 @@ def create_app(
             },
             "workspaces": WORKSPACES,
             "overview": store.overview(),
-            "projects": store.list_projects(),
+            "projects": projects,
             "conversations": store.list_conversations(include_archived=True),
             "agents": store.list_agents(),
             "skills": store.list_skills(),
@@ -274,7 +270,7 @@ def create_app(
             "activity": store.list_activity(),
             "foundation": guard.status(),
             "local_model": model_gateway.health(),
-            "integrations": {"github": github.status(), "codex": codex.status()},
+            "integrations": {"github": github.status(github_project), "codex": codex.status()},
         }
 
     @app.get("/api/projects", dependencies=[Depends(require_session)])
@@ -532,9 +528,12 @@ def create_app(
             return json.dumps(event, ensure_ascii=False, default=str) + "\n"
 
         async def event_stream() -> AsyncIterator[str]:
+            request_started = perf_counter()
             compilation: dict[str, Any] | None = None
             answer_parts: list[str] = []
             token_count = 0
+            generation_started: float | None = None
+            first_token_ms: int | None = None
             try:
                 yield encode_event(
                     {
@@ -563,12 +562,15 @@ def create_app(
                         "risk_level": compilation["risk_level"],
                     },
                 }
+                generation_started = perf_counter()
                 async for model_event in iterate_in_threadpool(
                     model_gateway.stream_chat(compilation["compiled_prompt"], model_context)
                 ):
                     if model_event.get("type") == "token":
                         token = str(model_event.get("content", ""))
                         if token:
+                            if first_token_ms is None:
+                                first_token_ms = round((perf_counter() - generation_started) * 1000)
                             answer_parts.append(token)
                             yield encode_event({"type": "token", "content": token})
                     elif model_event.get("type") == "done":
@@ -596,6 +598,11 @@ def create_app(
                         "provider": "ollama-local",
                         "model": model_gateway.model,
                         "tokens": token_count,
+                        "timings": {
+                            "prompt_rewrite_ms": int(compilation.get("rewrite_duration_ms", 0)),
+                            "first_token_ms": first_token_ms,
+                            "total_ms": round((perf_counter() - request_started) * 1000),
+                        },
                     }
                 )
             except asyncio.CancelledError:
@@ -807,7 +814,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="Project not found")
         guard.validate_project_root(project["root_path"])
         guard.validate_repository_url(project.get("repository_url"))
-        parameters = payload.model_dump(exclude={"project_id", "action"}, exclude_none=True)
+        parameters = payload.model_dump(exclude={"project_id", "action"}, exclude_none=True, exclude_defaults=True)
         approval = store.create_approval(
             action="github_operation",
             summary=f"Run GitHub {payload.action.replace('_', ' ')} for {project['name']}",
@@ -826,10 +833,18 @@ def create_app(
             raise HTTPException(status_code=404, detail="Project not found")
         evidence = approval.get("evidence", {})
         try:
-            result = await asyncio.to_thread(github.execute, project, evidence.get("operation", ""), evidence.get("parameters", {}))
+            result = await asyncio.to_thread(
+                github.execute,
+                project,
+                evidence.get("operation", ""),
+                evidence.get("parameters", {}),
+                approved_network=True,
+            )
         except Exception as exc:
             fail_approved_action(approval_id, exc)
             raise
+        if evidence.get("operation") == "verify_auth" and result.get("authenticated") is True:
+            store.set_plugin_status("plugin-github", "enabled", "connected")
         complete_approved_action(approval_id, f"GitHub {evidence.get('operation', 'operation')} completed")
         return result
 

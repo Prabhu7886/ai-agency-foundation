@@ -1,4 +1,4 @@
-import type { Bootstrap, Conversation, ConversationMessage, Project, PromptCompilation, Task } from "./types";
+import type { Bootstrap, Conversation, ConversationMessage, GitHubAction, GitHubStatus, Project, PromptCompilation, Task } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -89,6 +89,7 @@ export type ChatStreamEvent = {
   provider?: string;
   model?: string;
   tokens?: number;
+  timings?: { prompt_rewrite_ms: number; first_token_ms: number | null; total_ms: number };
 };
 
 export async function streamChat(
@@ -155,6 +156,27 @@ export function requestResearch(
 
 export function executeResearch(approvalId: string): Promise<Record<string, unknown>> {
   return request(`/api/research/requests/${approvalId}/execute`, { method: "POST" });
+}
+
+export function getGitHubStatus(projectId: string): Promise<GitHubStatus> {
+  return request(`/api/github/status/${projectId}`);
+}
+
+export function requestGitHubOperation(payload: {
+  project_id: string;
+  action: GitHubAction;
+  branch?: string;
+  paths?: string[];
+  message?: string;
+  title?: string;
+  body?: string;
+  base?: string;
+}): Promise<{ approval: import("./types").Approval }> {
+  return request("/api/github/requests", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function executeGitHubOperation(approvalId: string): Promise<Record<string, unknown>> {
+  return request(`/api/github/requests/${approvalId}/execute`, { method: "POST" });
 }
 
 export function createOpportunity(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
