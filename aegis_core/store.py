@@ -69,7 +69,27 @@ class AegisStore:
                 "ready",
                 "proposal-v1",
                 ["code", "tests", "security-review", "git-draft", "architecture"],
-            )
+            ),
+            (
+                "aegis-commerce",
+                "Aegis Commerce",
+                "personal commerce specialist",
+                "Runs the owner's commerce research and production cycle independently under Aegis supervision.",
+                "local-auto",
+                "offline",
+                "commerce-v0.2.0",
+                ["commerce", "research", "products", "listings", "pricing", "evidence"],
+            ),
+            (
+                "aegis-career-studio",
+                "Aegis Career Studio",
+                "resume and interview specialist",
+                "Runs the owner's evidence-backed career workspace independently under Aegis supervision.",
+                "local-auto",
+                "offline",
+                "career-v0.1.0",
+                ["career", "resume", "jobs", "interviews", "local-speech", "local-ocr"],
+            ),
         ]
         skills = [
             ("skill-secure-coding", "Secure Coding", "engineering", "Plan, implement, test, and review bounded code changes.", "testing", "medium", ["code", "tests", "diff-review"]),
@@ -93,6 +113,15 @@ class AegisStore:
                 (id, name, role, description, model_policy, status, prompt_version, capabilities_json, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [(*row[:7], json.dumps(row[7]), now, now) for row in agents],
+            )
+            connection.executemany(
+                """INSERT OR IGNORE INTO aegis_agent_endpoints
+                (agent_id, bridge_url, dashboard_url, enabled, contract_version, last_status, updated_at)
+                VALUES (?, ?, ?, 1, '1.0', 'offline', ?)""",
+                [
+                    ("aegis-commerce", "http://127.0.0.1:8511", "http://127.0.0.1:8501", now),
+                    ("aegis-career-studio", "http://127.0.0.1:8512", "http://127.0.0.1:8502", now),
+                ],
             )
             connection.executemany(
                 """INSERT OR IGNORE INTO aegis_skill_registry
@@ -559,6 +588,291 @@ class AegisStore:
             )
             self._activity(connection, "agent_created", f"Created agent proposal: {values['name']}", "agent", agent_id)
         return next(agent for agent in self.list_agents() if agent["id"] == agent_id)
+
+    def list_agent_endpoints(self, enabled_only: bool = True) -> list[dict[str, Any]]:
+        query = """SELECT e.*, a.name, a.role FROM aegis_agent_endpoints e
+        JOIN aegis_agent_registry a ON a.id = e.agent_id"""
+        if enabled_only:
+            query += " WHERE e.enabled = 1"
+        query += " ORDER BY a.name"
+        with self.database.connection() as connection:
+            rows = self._rows(connection.execute(query))
+        for row in rows:
+            row["enabled"] = bool(row["enabled"])
+        return rows
+
+    def latest_agent_snapshot(self, agent_id: str) -> dict[str, Any] | None:
+        with self.database.connection() as connection:
+            row = self._row(
+                connection.execute(
+                    """SELECT * FROM aegis_agent_snapshots
+                    WHERE agent_id = ? ORDER BY observed_at DESC LIMIT 1""",
+                    (agent_id,),
+                )
+            )
+        if row:
+            row["snapshot"] = self._decode(row.pop("snapshot_json"), {})
+        return row
+
+    def record_agent_snapshot(self, agent_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+        endpoint_ids = {item["agent_id"] for item in self.list_agent_endpoints(enabled_only=False)}
+        if agent_id not in endpoint_ids:
+            raise KeyError("Agent endpoint is not registered")
+        observed_at = str(snapshot.get("observed_at") or utc_now())
+        status = str(snapshot.get("health", {}).get("status") or snapshot.get("health", {}).get("state") or "offline")
+        normalized_status = {
+            "healthy": "ready",
+            "degraded": "ready",
+            "unavailable": "offline",
+            "quarantined": "paused",
+            "paused": "paused",
+        }.get(status, "ready")
+        encoded = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, default=str)
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        snapshot_id = new_id("snapshot")
+        now = utc_now()
+        with self.database.connection() as connection:
+            connection.execute(
+                """INSERT INTO aegis_agent_snapshots
+                (id, agent_id, status, snapshot_json, snapshot_sha256, observed_at)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (snapshot_id, agent_id, status, encoded, digest, observed_at),
+            )
+            connection.execute(
+                """UPDATE aegis_agent_endpoints SET last_seen_at = ?, last_status = ?, last_error = NULL,
+                contract_version = ?, updated_at = ? WHERE agent_id = ?""",
+                (observed_at, status, str(snapshot.get("contract_version", "1.0")), now, agent_id),
+            )
+            connection.execute(
+                "UPDATE aegis_agent_registry SET status = ?, updated_at = ? WHERE id = ?",
+                (normalized_status, now, agent_id),
+            )
+        return self.latest_agent_snapshot(agent_id) or {}
+
+    def mark_agent_unavailable(self, agent_id: str, error: str) -> None:
+        now = utc_now()
+        with self.database.connection() as connection:
+            connection.execute(
+                """UPDATE aegis_agent_endpoints SET last_status = 'offline', last_error = ?, updated_at = ?
+                WHERE agent_id = ?""",
+                (error[:1000], now, agent_id),
+            )
+            connection.execute(
+                "UPDATE aegis_agent_registry SET status = 'offline', updated_at = ? WHERE id = ?",
+                (now, agent_id),
+            )
+
+    def list_agent_fleet(self) -> list[dict[str, Any]]:
+        agents = {item["id"]: item for item in self.list_agents()}
+        endpoints = {item["agent_id"]: item for item in self.list_agent_endpoints(enabled_only=False)}
+        incidents = self.list_agent_incidents()
+        incident_counts: dict[str, int] = {}
+        for incident in incidents:
+            if incident["status"] != "resolved":
+                incident_counts[incident["agent_id"]] = incident_counts.get(incident["agent_id"], 0) + 1
+        fleet: list[dict[str, Any]] = []
+        for agent_id, endpoint in endpoints.items():
+            agent = agents.get(agent_id, {"id": agent_id, "name": agent_id})
+            latest = self.latest_agent_snapshot(agent_id)
+            snapshot = (latest or {}).get("snapshot", {})
+            fleet.append(
+                {
+                    **agent,
+                    "bridge": {
+                        "url": endpoint["bridge_url"],
+                        "dashboard_url": endpoint.get("dashboard_url"),
+                        "enabled": endpoint["enabled"],
+                        "contract_version": endpoint["contract_version"],
+                        "last_seen_at": endpoint.get("last_seen_at"),
+                        "last_status": endpoint["last_status"],
+                        "last_error": endpoint.get("last_error"),
+                    },
+                    "snapshot": snapshot,
+                    "open_incidents": incident_counts.get(agent_id, 0),
+                }
+            )
+        return fleet
+
+    def create_agent_incident(
+        self,
+        agent_id: str,
+        fingerprint: str,
+        severity: str,
+        incident_type: str,
+        title: str,
+        report: dict[str, Any],
+        capability: str | None = None,
+        contained: bool = False,
+    ) -> dict[str, Any]:
+        with self.database.connection() as connection:
+            existing = self._row(
+                connection.execute("SELECT * FROM aegis_agent_incidents WHERE fingerprint = ?", (fingerprint,))
+            )
+            if existing:
+                existing["report"] = self._decode(existing.pop("report_json"), {})
+                return existing
+            incident_id = new_id("incident")
+            now = utc_now()
+            connection.execute(
+                """INSERT INTO aegis_agent_incidents
+                (id, agent_id, fingerprint, severity, incident_type, title, status, capability,
+                 report_json, detected_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    incident_id,
+                    agent_id,
+                    fingerprint,
+                    severity,
+                    incident_type,
+                    title[:300],
+                    "contained" if contained else "open",
+                    capability,
+                    json.dumps(report, ensure_ascii=False, sort_keys=True, default=str),
+                    now,
+                ),
+            )
+            self._activity(
+                connection,
+                "agent_incident",
+                f"{severity.upper()} {title}",
+                "agent",
+                agent_id,
+                "critical" if severity == "critical" else "restricted",
+            )
+        return next(item for item in self.list_agent_incidents() if item["id"] == incident_id)
+
+    def list_agent_incidents(self, agent_id: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM aegis_agent_incidents"
+        params: tuple[Any, ...] = ()
+        if agent_id:
+            query += " WHERE agent_id = ?"
+            params = (agent_id,)
+        query += " ORDER BY detected_at DESC"
+        with self.database.connection() as connection:
+            rows = self._rows(connection.execute(query, params))
+        for row in rows:
+            row["report"] = self._decode(row.pop("report_json"), {})
+        return rows
+
+    def resolve_agent_incident(self, incident_id: str) -> dict[str, Any]:
+        now = utc_now()
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                """UPDATE aegis_agent_incidents SET status = 'resolved', resolved_at = ?
+                WHERE id = ?""",
+                (now, incident_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("Agent incident not found")
+            self._activity(connection, "agent_incident_resolved", "Resolved agent incident", "incident", incident_id)
+        return next(item for item in self.list_agent_incidents() if item["id"] == incident_id)
+
+    def record_agent_control(
+        self,
+        agent_id: str,
+        action: str,
+        capability: str | None,
+        reason: str,
+        source: str,
+        outcome: str,
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        control_id = new_id("control")
+        now = utc_now()
+        with self.database.connection() as connection:
+            connection.execute(
+                """INSERT INTO aegis_agent_controls
+                (id, agent_id, action, capability, reason, source, outcome, details_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (control_id, agent_id, action, capability, reason[:2000], source, outcome, json.dumps(details or {}), now),
+            )
+            self._activity(connection, "agent_control", f"{action}: {outcome}", "agent", agent_id, "restricted")
+        return next(item for item in self.list_agent_controls(agent_id) if item["id"] == control_id)
+
+    def list_agent_controls(self, agent_id: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM aegis_agent_controls"
+        params: tuple[Any, ...] = ()
+        if agent_id:
+            query += " WHERE agent_id = ?"
+            params = (agent_id,)
+        query += " ORDER BY created_at DESC"
+        with self.database.connection() as connection:
+            rows = self._rows(connection.execute(query, params))
+        for row in rows:
+            row["details"] = self._decode(row.pop("details_json"), {})
+        return rows
+
+    def create_agent_learning_update(self, payload: dict[str, Any], evaluation: dict[str, Any]) -> dict[str, Any]:
+        update_id = new_id("learning")
+        now = utc_now()
+        content = str(payload["content"])
+        status = "evaluated" if evaluation.get("auto_deploy_allowed") else "approval_required"
+        with self.database.connection() as connection:
+            if not connection.execute("SELECT 1 FROM aegis_agent_endpoints WHERE agent_id = ?", (payload["agent_id"],)).fetchone():
+                raise KeyError("Independent agent is not registered")
+            course_id = payload.get("course_id")
+            if course_id and not connection.execute("SELECT 1 FROM aegis_academy_courses WHERE id = ?", (course_id,)).fetchone():
+                raise KeyError("Academy course not found")
+            connection.execute(
+                """INSERT INTO aegis_agent_learning_updates
+                (id, agent_id, course_id, title, source, content, content_sha256, risk_level,
+                 status, evaluation_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    update_id,
+                    payload["agent_id"],
+                    course_id,
+                    payload["title"],
+                    payload["source"],
+                    content,
+                    hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    payload["risk_level"],
+                    status,
+                    json.dumps(evaluation, ensure_ascii=False, sort_keys=True),
+                    now,
+                ),
+            )
+            self._activity(connection, "agent_learning_evaluated", f"Evaluated learning update: {payload['title']}", "agent", payload["agent_id"])
+        return self.get_agent_learning_update(update_id) or {}
+
+    def get_agent_learning_update(self, update_id: str, include_content: bool = True) -> dict[str, Any] | None:
+        with self.database.connection() as connection:
+            row = self._row(connection.execute("SELECT * FROM aegis_agent_learning_updates WHERE id = ?", (update_id,)))
+        if not row:
+            return None
+        row["evaluation"] = self._decode(row.pop("evaluation_json"), {})
+        row["deployment"] = self._decode(row.pop("deployment_json"), {})
+        if not include_content:
+            row["content_preview"] = row["content"][:240]
+            row.pop("content", None)
+        return row
+
+    def list_agent_learning_updates(self, agent_id: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT id FROM aegis_agent_learning_updates"
+        params: tuple[Any, ...] = ()
+        if agent_id:
+            query += " WHERE agent_id = ?"
+            params = (agent_id,)
+        query += " ORDER BY created_at DESC"
+        with self.database.connection() as connection:
+            ids = [row[0] for row in connection.execute(query, params).fetchall()]
+        return [item for item in (self.get_agent_learning_update(value, include_content=False) for value in ids) if item]
+
+    def finish_agent_learning_update(self, update_id: str, status: str, deployment: dict[str, Any]) -> dict[str, Any]:
+        if status not in {"deployed", "failed", "rolled_back"}:
+            raise ValueError("Unsupported learning deployment status")
+        now = utc_now()
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                """UPDATE aegis_agent_learning_updates SET status = ?, deployment_json = ?, deployed_at = ?
+                WHERE id = ?""",
+                (status, json.dumps(deployment, ensure_ascii=False, sort_keys=True, default=str), now, update_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("Learning update not found")
+            row = self._row(connection.execute("SELECT agent_id, title FROM aegis_agent_learning_updates WHERE id = ?", (update_id,)))
+            self._activity(connection, "agent_learning_deployment", f"{status}: {row['title']}", "agent", row["agent_id"])
+        return self.get_agent_learning_update(update_id, include_content=False) or {}
 
     def list_skills(self) -> list[dict[str, Any]]:
         with self.database.connection() as connection:

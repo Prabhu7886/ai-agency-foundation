@@ -1,6 +1,6 @@
 # Aegis Capability Status
 
-Last verified: 2026-08-10 · Aegis 0.7.1
+Last verified: 2026-08-11 · Aegis 0.8.0
 
 This document separates working software from foundations, placeholders, and future intent. A capability is not called operational unless it has an implemented path and verification evidence.
 
@@ -15,7 +15,7 @@ This document separates working software from foundations, placeholders, and fut
 | Opportunity Engine | Public research reports, evidence scoring, and handoff to Solution Factory | Discovery is initiated by the owner; no autonomous recurring scans yet |
 | Solution Factory | Linked solution records and evidence-gated stage transitions | Does not yet run complete build, launch, revenue, or performance programs |
 | Aegis Hub | Owner-controlled digital identity, avatar, local push-to-talk surface, Academy course plans, progress, and visible preference memory | No external course credentials; voice depends on configured local speech engines |
-| Agent Fleet | Agent/skill/plugin registries, skill versions, evaluations, and approvals | Specialist agents are not yet connected through a live runtime contract |
+| Agent Fleet | Authenticated local bridges for independent Commerce and Career runtimes; 30-second health/metrics/task monitoring; incident reports; capability-level containment; approval-gated recovery; hashed controlled-learning deployment and rollback | Monitoring runs while Aegis is online; private agent payloads never cross the bridge; agents continue independently when Aegis is offline |
 | Data Lab | Reversible CSV cleaning plans and approved clean-copy execution | Current operations are bounded to trimming, null normalization, and deduplication |
 | Security Sentinel | Foundation status, secret-pattern scanning, risky-code checks, and dependency posture | Static checks support review but are not proof that software is vulnerability-free |
 
@@ -23,11 +23,11 @@ This document separates working software from foundations, placeholders, and fut
 
 - Scheduled World Pulse refreshes and approved public-account monitoring.
 - Continuous Opportunity Engine discovery across markets, forums, reviews, and customer complaints.
-- Course ingestion, shared notes, quizzes, exercises, projects, and evaluated Academy-to-skill promotion.
+- Full course ingestion, shared notes, quizzes, exercises, and projects. Bounded completed-course learning updates are operational, but course-platform synchronization is not.
 - Automatic feedback analysis and proposed skill improvements with evaluation and rollback.
 - Continuous conversational voice, avatar animation, and interruption handling.
 - Dashboard-wide search, notifications, settings, backup/recovery controls, and long-duration reliability monitoring.
-- Live specialist-agent telemetry, task/result envelopes, freshness reports, security events, and approval requests.
+- Direct Aegis task dispatch into specialist agents. Live supervision is operational, but Aegis does not yet initiate their domain work.
 - Production deployment or multi-user access; Aegis remains an owner-operated loopback application.
 
 ## Truth rule

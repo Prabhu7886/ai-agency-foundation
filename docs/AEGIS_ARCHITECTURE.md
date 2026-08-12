@@ -63,6 +63,11 @@ FastAPI control plane (loopback-only session)
         |     +-- agents, skills, and plugins
         |     +-- approvals and activity
         |     +-- World Pulse, opportunities, and solutions
+        |     +-- agent snapshots, incidents, controls, and learning reports
+        |
+        +-- authenticated loopback Agent Bridge supervision
+        |     +-- Commerce (independent runtime and encrypted store)
+        |     +-- Career Studio (independent runtime and encrypted store)
         |
         +-- Ollama local model gateway
         |
@@ -124,6 +129,7 @@ Implemented in the first vertical slice:
 - Push-to-talk browser capture boundary.
 - Aegis brand system, code-native mark, and three generated logo directions.
 - Automated control-plane tests and browser acceptance coverage.
+- Independent Commerce and Career supervision with capability containment, incident recovery, and controlled learning.
 
 Next implementation slices:
 

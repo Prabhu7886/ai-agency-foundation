@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
 from typing import Any, AsyncIterator
@@ -20,6 +21,7 @@ from starlette.concurrency import iterate_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from aegis_core.foundation import FoundationGuard, FoundationViolation
+from aegis_core.agent_fleet import AgentFleetService
 from aegis_core.codex_adapter import CodexAppServerAdapter
 from aegis_core.data_lab import DataLabService
 from aegis_core.github_adapter import GitHubAdapter
@@ -31,7 +33,10 @@ from aegis_core.research import WebResearchService
 from aegis_core.schemas import (
     AcademyCourseCreate,
     AcademyCourseUpdate,
+    AgentControlRequest,
     AgentCreate,
+    AgentLearningRollbackRequest,
+    AgentLearningUpdateCreate,
     ApprovalDecision,
     ChatRequest,
     CodexTaskRequest,
@@ -116,20 +121,39 @@ def create_app(
     opportunity_reports = OpportunityReportService()
     data_lab = DataLabService(guard)
     voice = LocalVoiceService()
+    agent_fleet = AgentFleetService(store)
     session_token = secrets.token_urlsafe(32)
+
+    monitor_stop = asyncio.Event()
+
+    async def monitor_independent_agents() -> None:
+        while not monitor_stop.is_set():
+            try:
+                await asyncio.to_thread(agent_fleet.poll_all)
+            except Exception:
+                # Individual failures are recorded by AgentFleetService. The monitor itself
+                # remains alive so one broken specialist cannot disable fleet supervision.
+                pass
+            try:
+                await asyncio.wait_for(monitor_stop.wait(), timeout=30)
+            except asyncio.TimeoutError:
+                continue
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         store.initialize()
         store.ensure_foundation_project(root, "https://github.com/Prabhu7886/ai-agency-foundation")
+        monitor_task = asyncio.create_task(monitor_independent_agents())
         try:
             yield
         finally:
+            monitor_stop.set()
+            await monitor_task
             codex.close()
 
     app = FastAPI(
         title="Aegis Local Executive API",
-        version="0.7.1",
+        version="0.8.0",
         description="Local-first executive control plane built on the AI Agency security foundation.",
         lifespan=lifespan,
         docs_url="/api/docs" if os.getenv("AEGIS_ENABLE_API_DOCS", "false").lower() == "true" else None,
@@ -177,7 +201,7 @@ def create_app(
         codex_plugin = plugins.get("plugin-codex", {})
         local_status = await asyncio.to_thread(model_router.status)
         return {
-            "version": "0.7.1",
+            "version": "0.8.0",
             "workspaces": [item["label"] for item in WORKSPACES],
             "overview": store.overview(),
             "agents": [
@@ -213,6 +237,8 @@ def create_app(
                 "Dual approval queues backed by one single-use encrypted execution ledger",
                 "World Pulse niche filtering with an internal source brief reader",
                 "Opportunity-to-Solution handoff with approval-gated evidence stages",
+                "Authenticated local Agent Bridge supervision for independent Commerce and Career runtimes",
+                "Capability-level containment, incident reporting, and versioned controlled learning",
             ],
             "integrations": {
                 "ollama": {
@@ -247,7 +273,7 @@ def create_app(
             "status": "ok",
             "local_only": True,
             "service": "aegis",
-            "version": "0.7.1",
+            "version": "0.8.0",
             "database": "sqlcipher-required",
             "prompt_compiler": "required",
         }
@@ -288,6 +314,10 @@ def create_app(
             "projects": projects,
             "conversations": store.list_conversations(include_archived=True),
             "agents": store.list_agents(),
+            "agent_fleet": store.list_agent_fleet(),
+            "agent_incidents": store.list_agent_incidents(),
+            "agent_controls": store.list_agent_controls(),
+            "agent_learning_updates": store.list_agent_learning_updates(),
             "skills": store.list_skills(),
             "plugins": plugins,
             "approvals": store.list_approvals(),
@@ -361,6 +391,124 @@ def create_app(
             if "UNIQUE" in str(exc).upper():
                 raise HTTPException(status_code=409, detail="Agent name already exists") from exc
             raise
+
+    @app.get("/api/fleet", dependencies=[Depends(require_session)])
+    async def fleet() -> dict[str, Any]:
+        return {
+            "agents": store.list_agent_fleet(),
+            "incidents": store.list_agent_incidents(),
+            "controls": store.list_agent_controls(),
+            "learning_updates": store.list_agent_learning_updates(),
+        }
+
+    @app.post("/api/fleet/poll", dependencies=[Depends(require_session)])
+    async def poll_fleet() -> dict[str, Any]:
+        results = await asyncio.to_thread(agent_fleet.poll_all)
+        return {"polled_at": datetime.now(timezone.utc).isoformat(), "results": results}
+
+    @app.post("/api/fleet/agents/{agent_id}/control", dependencies=[Depends(require_session)])
+    async def control_fleet_agent(agent_id: str, payload: AgentControlRequest) -> dict[str, Any]:
+        if payload.action in {"resume_capability", "recover"}:
+            approval = store.create_approval(
+                "agent_recovery",
+                f"Review {payload.action.replace('_', ' ')} for {agent_id}",
+                "high" if payload.action == "recover" else "medium",
+                evidence={
+                    "agent_id": agent_id,
+                    "action": payload.action,
+                    "capability": payload.capability,
+                    "reason": payload.reason,
+                },
+                approval_queue="security_operations",
+            )
+            return {"status": "approval_required", "approval": approval}
+        try:
+            return await asyncio.to_thread(
+                agent_fleet.control_agent,
+                agent_id,
+                payload.action,
+                payload.capability,
+                payload.reason,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/fleet/controls/{approval_id}/execute", dependencies=[Depends(require_session)])
+    async def execute_fleet_control(approval_id: str) -> dict[str, Any]:
+        approval = claim_approved_action(approval_id, "agent_recovery")
+        evidence = approval.get("evidence", {})
+        try:
+            result = await asyncio.to_thread(
+                agent_fleet.control_agent,
+                evidence["agent_id"],
+                evidence["action"],
+                evidence.get("capability"),
+                evidence["reason"],
+            )
+            complete_approved_action(approval_id, f"Agent control completed: {evidence['action']}")
+            return result
+        except Exception as exc:
+            fail_approved_action(approval_id, exc)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/fleet/learning", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_session)])
+    async def create_fleet_learning(payload: AgentLearningUpdateCreate) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(agent_fleet.create_learning_update, payload.model_dump())
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/fleet/learning/{approval_id}/execute", dependencies=[Depends(require_session)])
+    async def execute_fleet_learning(approval_id: str) -> dict[str, Any]:
+        approval = claim_approved_action(approval_id, "agent_learning_deploy")
+        update_id = str(approval.get("evidence", {}).get("learning_update_id", ""))
+        try:
+            result = await asyncio.to_thread(agent_fleet.deploy_learning, update_id)
+            complete_approved_action(approval_id, f"Learning update deployed: {update_id}")
+            return result
+        except Exception as exc:
+            fail_approved_action(approval_id, exc)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/fleet/learning/{update_id}/rollback", dependencies=[Depends(require_session)])
+    async def request_fleet_learning_rollback(update_id: str, payload: AgentLearningRollbackRequest) -> dict[str, Any]:
+        update = store.get_agent_learning_update(update_id, include_content=False)
+        if not update:
+            raise HTTPException(status_code=404, detail="Learning update not found")
+        return store.create_approval(
+            "agent_learning_rollback",
+            f"Review rollback of {update['title']} for {update['agent_id']}",
+            "medium",
+            evidence={"learning_update_id": update_id, "reason": payload.reason},
+            approval_queue="security_operations",
+        )
+
+    @app.post("/api/fleet/learning-rollbacks/{approval_id}/execute", dependencies=[Depends(require_session)])
+    async def execute_fleet_learning_rollback(approval_id: str) -> dict[str, Any]:
+        approval = claim_approved_action(approval_id, "agent_learning_rollback")
+        evidence = approval.get("evidence", {})
+        try:
+            result = await asyncio.to_thread(
+                agent_fleet.rollback_learning,
+                str(evidence.get("learning_update_id", "")),
+                str(evidence.get("reason", "Owner-approved rollback")),
+            )
+            complete_approved_action(approval_id, "Agent learning update rolled back")
+            return result
+        except Exception as exc:
+            fail_approved_action(approval_id, exc)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/fleet/incidents/{incident_id}/resolve", dependencies=[Depends(require_session)])
+    async def resolve_fleet_incident(incident_id: str) -> dict[str, Any]:
+        try:
+            return store.resolve_agent_incident(incident_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/api/skills", dependencies=[Depends(require_session)])
     async def skills() -> list[dict[str, Any]]:

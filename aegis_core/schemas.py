@@ -208,3 +208,22 @@ class LearningMemoryCreate(BaseModel):
 
 class LearningMemoryDecision(BaseModel):
     status: Literal["confirmed", "disabled"]
+
+
+class AgentControlRequest(BaseModel):
+    action: Literal["pause_capability", "resume_capability", "quarantine", "recover"]
+    capability: str | None = Field(default=None, max_length=120)
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class AgentLearningUpdateCreate(BaseModel):
+    agent_id: str = Field(min_length=2, max_length=120)
+    course_id: str | None = Field(default=None, max_length=120)
+    title: str = Field(min_length=3, max_length=300)
+    source: str = Field(min_length=2, max_length=1000)
+    content: str = Field(min_length=40, max_length=50_000)
+    risk_level: RiskLevel = "low"
+
+
+class AgentLearningRollbackRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000)

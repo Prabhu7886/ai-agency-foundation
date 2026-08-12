@@ -206,6 +206,78 @@ CREATE TABLE IF NOT EXISTS aegis_agent_registry (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS aegis_agent_endpoints (
+    agent_id TEXT PRIMARY KEY REFERENCES aegis_agent_registry(id) ON DELETE CASCADE,
+    bridge_url TEXT NOT NULL UNIQUE,
+    dashboard_url TEXT,
+    enabled BOOLEAN NOT NULL DEFAULT 1,
+    contract_version TEXT NOT NULL DEFAULT '1.0',
+    last_seen_at TEXT,
+    last_status TEXT NOT NULL DEFAULT 'offline',
+    last_error TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aegis_agent_snapshots (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES aegis_agent_registry(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    snapshot_sha256 TEXT NOT NULL,
+    observed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_agent_snapshots_time
+ON aegis_agent_snapshots(agent_id, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS aegis_agent_incidents (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES aegis_agent_registry(id) ON DELETE CASCADE,
+    fingerprint TEXT NOT NULL UNIQUE,
+    severity TEXT NOT NULL CHECK(severity IN ('low', 'medium', 'high', 'critical')),
+    incident_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'contained', 'resolved')),
+    capability TEXT,
+    report_json TEXT NOT NULL,
+    detected_at TEXT NOT NULL,
+    resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_agent_incidents_status
+ON aegis_agent_incidents(status, severity, detected_at DESC);
+
+CREATE TABLE IF NOT EXISTS aegis_agent_controls (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES aegis_agent_registry(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    capability TEXT,
+    reason TEXT NOT NULL,
+    source TEXT NOT NULL CHECK(source IN ('automatic', 'owner')),
+    outcome TEXT NOT NULL,
+    details_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_agent_controls_time
+ON aegis_agent_controls(agent_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS aegis_agent_learning_updates (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES aegis_agent_registry(id) ON DELETE CASCADE,
+    course_id TEXT REFERENCES aegis_academy_courses(id) ON DELETE SET NULL,
+    title TEXT NOT NULL,
+    source TEXT NOT NULL,
+    content TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    risk_level TEXT NOT NULL CHECK(risk_level IN ('low', 'medium', 'high', 'critical')),
+    status TEXT NOT NULL CHECK(status IN ('proposed', 'evaluated', 'approval_required', 'deployed', 'failed', 'rolled_back')),
+    evaluation_json TEXT NOT NULL DEFAULT '{}',
+    deployment_json TEXT NOT NULL DEFAULT '{}',
+    rollback_of TEXT REFERENCES aegis_agent_learning_updates(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    deployed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_agent_learning_status
+ON aegis_agent_learning_updates(agent_id, status, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS aegis_skill_registry (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -513,6 +585,11 @@ class DatabaseSetup:
             "aegis_tasks",
             "aegis_prompt_compilations",
             "aegis_agent_registry",
+            "aegis_agent_endpoints",
+            "aegis_agent_snapshots",
+            "aegis_agent_incidents",
+            "aegis_agent_controls",
+            "aegis_agent_learning_updates",
             "aegis_skill_registry",
             "aegis_agent_skills",
             "aegis_skill_versions",

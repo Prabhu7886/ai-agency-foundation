@@ -261,3 +261,46 @@ export function transcribeVoice(blob: Blob): Promise<{ text: string; engine: str
 export function speakVoice(text: string): Promise<Record<string, unknown>> {
   return request("/api/voice/speak", { method: "POST", body: JSON.stringify({ text }) });
 }
+
+export function pollAgentFleet(): Promise<Record<string, unknown>> {
+  return request("/api/fleet/poll", { method: "POST" });
+}
+
+export function controlFleetAgent(
+  agentId: string,
+  action: "pause_capability" | "resume_capability" | "quarantine" | "recover",
+  capability: string | null,
+  reason: string,
+): Promise<Record<string, unknown>> {
+  return request(`/api/fleet/agents/${agentId}/control`, {
+    method: "POST",
+    body: JSON.stringify({ action, capability, reason }),
+  });
+}
+
+export function executeFleetControl(approvalId: string): Promise<Record<string, unknown>> {
+  return request(`/api/fleet/controls/${approvalId}/execute`, { method: "POST" });
+}
+
+export function createFleetLearning(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return request("/api/fleet/learning", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function executeFleetLearning(approvalId: string): Promise<Record<string, unknown>> {
+  return request(`/api/fleet/learning/${approvalId}/execute`, { method: "POST" });
+}
+
+export function requestFleetLearningRollback(updateId: string, reason: string): Promise<Record<string, unknown>> {
+  return request(`/api/fleet/learning/${updateId}/rollback`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function executeFleetLearningRollback(approvalId: string): Promise<Record<string, unknown>> {
+  return request(`/api/fleet/learning-rollbacks/${approvalId}/execute`, { method: "POST" });
+}
+
+export function resolveFleetIncident(incidentId: string): Promise<Record<string, unknown>> {
+  return request(`/api/fleet/incidents/${incidentId}/resolve`, { method: "POST" });
+}

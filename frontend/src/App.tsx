@@ -62,27 +62,35 @@ import {
   executeCodexDeviceLogin,
   executeCodexTask,
   executeDataJob,
+  executeFleetControl,
+  executeFleetLearning,
+  executeFleetLearningRollback,
   executeResearch,
   executeGitHubOperation,
   executeSolutionTransition,
   getCodexStatus,
   getConversation,
+  controlFleetAgent,
+  createFleetLearning,
   requestCodexDeviceLogin,
   requestCodexTask,
   requestResearch,
   proposeWorldPulseSource,
   requestGitHubOperation,
   requestDataJob,
+  requestFleetLearningRollback,
   requestSolutionTransition,
   restoreConversation,
   runSecurityScan,
+  pollAgentFleet,
+  resolveFleetIncident,
   updateAcademyCourse,
   decideLearningMemory,
   speakVoice,
   streamChat,
   transcribeVoice,
 } from "./api";
-import type { Agent, Approval, Bootstrap, CodexStatus, Conversation, ConversationMessage, GitHubAction, GitHubGovernance, GitHubStatus, Plugin, Project, SecurityScan, Skill, Workspace, WorldPulseItem } from "./types";
+import type { Agent, AgentIncident, Approval, Bootstrap, CodexStatus, Conversation, ConversationMessage, GitHubAction, GitHubGovernance, GitHubStatus, IndependentAgent, Plugin, Project, SecurityScan, Skill, Workspace, WorldPulseItem } from "./types";
 
 const workspaceIcons: Record<string, ReactNode> = {
   "executive-home": <CircleGauge size={17} />,
@@ -128,7 +136,7 @@ export default function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [createMode, setCreateMode] = useState<"project" | "agent" | "skill" | null>(null);
-  const [fleetTab, setFleetTab] = useState<"agents" | "skills" | "plugins">("agents");
+  const [fleetTab, setFleetTab] = useState<"agents" | "performance" | "tasks" | "skills" | "security" | "learning" | "plugins">("agents");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -201,6 +209,15 @@ export default function App() {
       }
       if (decision === "approved" && item.action === "solution_transition") {
         return executeSolutionTransition(item.id);
+      }
+      if (decision === "approved" && item.action === "agent_recovery") {
+        return executeFleetControl(item.id);
+      }
+      if (decision === "approved" && item.action === "agent_learning_deploy") {
+        return executeFleetLearning(item.id);
+      }
+      if (decision === "approved" && item.action === "agent_learning_rollback") {
+        return executeFleetLearningRollback(item.id);
       }
       return undefined;
     }, decision === "approved" && item.action === "public_web_research"
@@ -326,13 +343,16 @@ export default function App() {
           {activeWorkspace === "ai-workspace" && <AIWorkspace project={selectedProject} conversations={data.conversations} onRefresh={() => refresh(true)} />}
           {activeWorkspace === "agent-fleet" && (
             <AgentFleet
-              agents={data.agents}
-              skills={data.skills}
-              plugins={data.plugins}
+              data={data}
               tab={fleetTab}
               onTab={setFleetTab}
               onCreate={setCreateMode}
               onPlugin={(plugin) => mutate(() => changePlugin(plugin.id, plugin.status !== "enabled"), plugin.status === "enabled" ? "Plugin disabled" : "Plugin approval created")}
+              onPoll={() => mutate(() => pollAgentFleet(), "Independent agents checked")}
+              onControl={(agentId, action, capability, reason) => mutate(() => controlFleetAgent(agentId, action, capability, reason), action === "recover" || action === "resume_capability" ? "Recovery sent to Approval Center" : "Agent containment applied")}
+              onLearning={(payload) => mutate(() => createFleetLearning(payload), "Learning update evaluated and recorded")}
+              onRollback={(updateId) => mutate(() => requestFleetLearningRollback(updateId, "Owner requested rollback from Agent Fleet"), "Learning rollback sent to Approval Center")}
+              onResolve={(incidentId) => mutate(() => resolveFleetIncident(incidentId), "Incident marked resolved")}
             />
           )}
           {activeWorkspace === "world-pulse" && (
@@ -830,23 +850,78 @@ function PanelHeader({ icon, title, action }: { icon: ReactNode; title: string; 
   return <div className="panel-header"><div>{icon}<h3>{title}</h3></div>{action}</div>;
 }
 
-function AgentFleet({ agents, skills, plugins, tab, onTab, onCreate, onPlugin }: {
-  agents: Agent[]; skills: Skill[]; plugins: Plugin[]; tab: "agents" | "skills" | "plugins";
-  onTab: (tab: "agents" | "skills" | "plugins") => void;
+type FleetTab = "agents" | "performance" | "tasks" | "skills" | "security" | "learning" | "plugins";
+
+function fleetTone(agent: IndependentAgent) {
+  if (agent.snapshot.controls?.quarantined || agent.open_incidents > 0) return "warning";
+  return agent.bridge.last_status === "healthy" || agent.bridge.last_status === "degraded" ? "safe" : "neutral";
+}
+
+function AgentFleet({ data, tab, onTab, onCreate, onPlugin, onPoll, onControl, onLearning, onRollback, onResolve }: {
+  data: Bootstrap;
+  tab: FleetTab;
+  onTab: (tab: FleetTab) => void;
   onCreate: (mode: "agent" | "skill") => void;
   onPlugin: (plugin: Plugin) => void;
+  onPoll: () => Promise<void>;
+  onControl: (agentId: string, action: "pause_capability" | "resume_capability" | "quarantine" | "recover", capability: string | null, reason: string) => Promise<void>;
+  onLearning: (payload: Record<string, unknown>) => Promise<void>;
+  onRollback: (updateId: string) => Promise<void>;
+  onResolve: (incidentId: string) => Promise<void>;
 }) {
+  const [learning, setLearning] = useState({
+    agent_id: data.agent_fleet[0]?.id ?? "",
+    course_id: "",
+    title: "",
+    source: "",
+    content: "",
+    risk_level: "low",
+  });
+  const tabs: FleetTab[] = ["agents", "performance", "tasks", "skills", "security", "learning", "plugins"];
+  const submitLearning = async (event: FormEvent) => {
+    event.preventDefault();
+    await onLearning({ ...learning, course_id: learning.course_id || null });
+    setLearning({ ...learning, title: "", source: "", content: "" });
+  };
   return (
     <div className="single-workspace">
-      <div className="workspace-intro"><div><div className="eyebrow">MODULAR INTELLIGENCE</div><h2>Agents do the work.<br /><span>Skills make them stronger.</span></h2><p>Aegis controls versions, permissions, models, evaluations, and shared knowledge.</p></div><Network className="intro-icon" /></div>
-      <div className="segmented-tabs">
-        {(["agents", "skills", "plugins"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => onTab(item)}>{item}</button>)}
-      </div>
-      {tab === "agents" && <CardGrid items={agents} render={(agent) => <AgentCard agent={agent} />} action={<button className="secondary-button" onClick={() => onCreate("agent")}><Plus size={15} /> New agent</button>} />}
-      {tab === "skills" && <CardGrid items={skills} render={(skill) => <SkillCard skill={skill} />} action={<button className="secondary-button" onClick={() => onCreate("skill")}><PackagePlus size={15} /> New skill</button>} />}
-      {tab === "plugins" && <CardGrid items={plugins} render={(plugin) => <PluginCard plugin={plugin} onChange={() => onPlugin(plugin)} />} />}
+      <div className="workspace-intro"><div><div className="eyebrow">SUPERVISED INDEPENDENCE</div><h2>Agents run their business cycles.<br /><span>Aegis protects the system.</span></h2><p>Authenticated local monitoring, capability-level containment, reviewable learning, and rollback without merging agent runtimes.</p></div><Network className="intro-icon" /></div>
+      <div className="fleet-toolbar"><div className="segmented-tabs fleet-tabs">{tabs.map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => onTab(item)}>{item}</button>)}</div><button className="secondary-button" onClick={() => void onPoll()}><RotateCcw size={14} /> Check now</button></div>
+
+      {tab === "agents" && <div className="card-grid">{data.agent_fleet.map((agent) => {
+        const connected = agent.bridge.last_status !== "offline";
+        const paused = agent.snapshot.controls?.paused_capabilities ?? [];
+        return <article className="entity-card fleet-agent-card" key={agent.id}>
+          <div className="entity-card__top"><div className="entity-icon agent"><Bot size={20} /></div><StatusPill tone={fleetTone(agent)}>{agent.snapshot.controls?.quarantined ? "quarantined" : agent.bridge.last_status}</StatusPill></div>
+          <h3>{agent.name}</h3><span className="entity-subtitle">{agent.role}</span><p>{agent.description}</p>
+          <div className="fleet-stat-row"><span><strong>{Number(agent.snapshot.metrics?.tasks_total ?? 0)}</strong> tasks</span><span><strong>{agent.open_incidents}</strong> incidents</span><span><strong>{paused.length}</strong> paused</span></div>
+          <div className="chip-row">{(agent.snapshot.identity?.capabilities ?? agent.capabilities).slice(0, 5).map((item) => <span key={item}>{item}</span>)}</div>
+          {agent.bridge.last_error && <small className="fleet-error">{agent.bridge.last_error}</small>}
+          <div className="fleet-actions">{agent.bridge.dashboard_url && <a className="plugin-action" href={agent.bridge.dashboard_url}>Open independent studio <ChevronRight size={14} /></a>}<button disabled={!connected || agent.snapshot.controls?.quarantined} onClick={() => { if (window.confirm(`Quarantine ${agent.name}? Safe work will stop until recovery is approved.`)) void onControl(agent.id, "quarantine", null, "Owner initiated containment from Aegis Agent Fleet"); }}>Quarantine</button></div>
+          <footer><span>Bridge v{agent.bridge.contract_version}</span><span>{agent.bridge.last_seen_at ? `${timeAgo(agent.bridge.last_seen_at)} ago` : "never seen"}</span></footer>
+        </article>;
+      })}{data.agent_fleet.length === 0 && <EmptyState icon={<Bot />} title="No independent agents registered" body="Register an authenticated loopback Agent Bridge before supervision begins." />}</div>}
+
+      {tab === "performance" && <div className="fleet-panel-grid">{data.agent_fleet.map((agent) => {
+        const metrics = agent.snapshot.metrics;
+        return <section className="panel fleet-panel" key={agent.id}><PanelHeader icon={<Activity size={17} />} title={agent.name} /><div className="fleet-kpis"><div><strong>{metrics?.tasks_total ?? 0}</strong><span>Recorded tasks</span></div><div><strong>{Math.round(Number(metrics?.failure_rate ?? 0) * 100)}%</strong><span>Failure rate</span></div><div><strong>{metrics?.resources?.rss_mb ?? 0} MB</strong><span>Bridge memory</span></div></div><div className="fleet-domain-metrics">{Object.entries(metrics?.domain ?? {}).map(([key, value]) => <span key={key}><b>{value}</b>{key.replaceAll("_", " ")}</span>)}</div><small>Observed {agent.snapshot.observed_at ? `${timeAgo(agent.snapshot.observed_at)} ago` : "never"}. Metrics exclude private task payloads.</small></section>;
+      })}</div>}
+
+      {tab === "tasks" && <section className="panel"><PanelHeader icon={<Workflow size={17} />} title="Sanitized progress feed" /><div className="fleet-table"><div className="fleet-table__head"><span>Agent</span><span>Task</span><span>Status</span><span>Updated</span></div>{data.agent_fleet.flatMap((agent) => (agent.snapshot.tasks ?? []).map((task) => ({ agent, task }))).map(({ agent, task }) => <div key={`${agent.id}-${task.task_id}`}><span>{agent.name}</span><span>{task.task_type.replaceAll("_", " ")}</span><span><StatusPill tone={task.status === "completed" ? "safe" : task.status === "failed" ? "warning" : "neutral"}>{task.status}</StatusPill></span><span>{task.updated_at ? `${timeAgo(task.updated_at)} ago` : "—"}</span></div>)}</div><small>Only identifiers, state, and timestamps cross the bridge. Resume text, customer data, prompts, and credentials remain inside each agent.</small></section>}
+
+      {tab === "skills" && <><CardGrid items={data.skills} render={(skill) => <SkillCard skill={skill} />} action={<button className="secondary-button" onClick={() => onCreate("skill")}><PackagePlus size={15} /> New Aegis skill</button>} /><div className="fleet-panel-grid">{data.agent_fleet.map((agent) => <section className="panel fleet-panel" key={agent.id}><PanelHeader icon={<Layers3 size={17} />} title={`${agent.name} reported skills`} /><div className="fleet-skill-list">{(agent.snapshot.skills ?? []).map((skill, index) => <span key={String(skill.skill_id ?? index)}><b>{String(skill.skill_id ?? "skill")}</b>v{String(skill.version ?? "unknown")}</span>)}</div></section>)}</div></>}
+
+      {tab === "security" && <div className="fleet-security-layout"><section className="panel"><PanelHeader icon={<ShieldCheck size={17} />} title="Incident reports" />{data.agent_incidents.length === 0 ? <EmptyState icon={<ShieldCheck />} title="No agent incidents" body="Aegis has not detected a threshold-crossing security or reliability event." /> : <div className="incident-list">{data.agent_incidents.map((incident) => <IncidentCard key={incident.id} incident={incident} agent={data.agent_fleet.find((item) => item.id === incident.agent_id)} onControl={onControl} onResolve={onResolve} />)}</div>}</section><section className="panel"><PanelHeader icon={<Activity size={17} />} title="Containment ledger" /><div className="control-ledger">{data.agent_controls.slice(0, 30).map((control) => <div key={control.id}><StatusPill tone={control.outcome === "completed" ? "safe" : "warning"}>{control.outcome}</StatusPill><div><strong>{control.action.replaceAll("_", " ")}</strong><span>{control.agent_id} · {control.capability ?? "whole agent"} · {control.source}</span><small>{control.reason}</small></div></div>)}</div></section></div>}
+
+      {tab === "learning" && <div className="fleet-learning-layout"><section className="panel"><PanelHeader icon={<BrainCircuit size={17} />} title="Prepare controlled learning update" /><form className="fleet-learning-form" onSubmit={submitLearning}><label>Target agent<select required value={learning.agent_id} onChange={(event) => setLearning({ ...learning, agent_id: event.target.value })}>{data.agent_fleet.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>)}</select></label><label>Completed course<select value={learning.course_id} onChange={(event) => { const course = data.academy_courses.find((item) => item.id === event.target.value); setLearning({ ...learning, course_id: event.target.value, source: course?.source_url ?? course?.provider ?? learning.source }); }}><option value="">No completed course — require approval</option>{data.academy_courses.filter((course) => course.status === "completed").map((course) => <option value={course.id} key={course.id}>{course.title}</option>)}</select></label><input required value={learning.title} onChange={(event) => setLearning({ ...learning, title: event.target.value })} placeholder="Knowledge or skill update title" /><input required value={learning.source} onChange={(event) => setLearning({ ...learning, source: event.target.value })} placeholder="Source course, URL, or owner reference" /><textarea required minLength={40} value={learning.content} onChange={(event) => setLearning({ ...learning, content: event.target.value })} placeholder="Verified lesson, operating rule, or bounded skill reference…" /><label>Risk<select value={learning.risk_level} onChange={(event) => setLearning({ ...learning, risk_level: event.target.value })}><option value="low">Low — may auto-deploy after all checks</option><option value="medium">Medium — owner approval</option><option value="high">High — owner approval</option><option value="critical">Critical — owner approval</option></select></label><button className="primary-button">Evaluate update</button><small>Only a low-risk update linked to a completed course, with no authority-expanding language, can auto-deploy. Every deployment is hashed, reported, and reversible.</small></form></section><section className="panel"><PanelHeader icon={<Archive size={17} />} title="Learning and rollback history" /><div className="learning-ledger">{data.agent_learning_updates.map((update) => <article key={update.id}><div><StatusPill tone={update.status === "deployed" ? "safe" : update.status === "failed" ? "warning" : "neutral"}>{update.status.replaceAll("_", " ")}</StatusPill><span>{update.risk_level} risk</span></div><h3>{update.title}</h3><p>{update.content_preview}</p><small>{update.agent_id} · SHA-256 {update.content_sha256.slice(0, 12)}… · {timeAgo(update.created_at)} ago</small>{update.status === "deployed" && <button onClick={() => void onRollback(update.id)}><RotateCcw size={13} /> Request rollback</button>}</article>)}</div></section></div>}
+
+      {tab === "plugins" && <CardGrid items={data.plugins} render={(plugin) => <PluginCard plugin={plugin} onChange={() => onPlugin(plugin)} />} />}
     </div>
   );
+}
+
+function IncidentCard({ incident, agent, onControl, onResolve }: { incident: AgentIncident; agent?: IndependentAgent; onControl: (agentId: string, action: "pause_capability" | "resume_capability" | "quarantine" | "recover", capability: string | null, reason: string) => Promise<void>; onResolve: (incidentId: string) => Promise<void> }) {
+  return <article className="incident-card"><header><StatusPill tone={incident.severity === "critical" || incident.severity === "high" ? "warning" : "neutral"}>{incident.severity}</StatusPill><span>{incident.status}</span><small>{timeAgo(incident.detected_at)} ago</small></header><h3>{incident.title}</h3><p>{incident.report.summary}</p><div className="incident-section"><strong>Action taken</strong><span>{String(incident.report.action_taken?.status ?? "monitor only").replaceAll("_", " ")}{incident.capability ? ` · ${incident.capability}` : ""}</span></div><details><summary>Evidence and possible solutions</summary><pre>{JSON.stringify(incident.report.evidence ?? {}, null, 2)}</pre><ol>{incident.report.possible_solutions?.map((item) => <li key={item}>{item}</li>)}</ol></details><div className="fleet-actions">{incident.status !== "resolved" && agent?.snapshot.controls?.quarantined && <button onClick={() => void onControl(incident.agent_id, "recover", null, `Recover after reviewing incident ${incident.id}`)}>Request recovery</button>}{incident.status !== "resolved" && incident.capability && agent?.snapshot.controls?.paused_capabilities?.includes(incident.capability) && <button onClick={() => void onControl(incident.agent_id, "resume_capability", incident.capability ?? null, `Resume after reviewing incident ${incident.id}`)}>Request capability resume</button>}{incident.status !== "resolved" && <button onClick={() => void onResolve(incident.id)}>Mark resolved</button>}</div></article>;
 }
 
 function CardGrid<T>({ items, render, action }: { items: T[]; render: (item: T) => ReactNode; action?: ReactNode }) {

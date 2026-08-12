@@ -537,3 +537,55 @@ body::before {
   .ai-composer-dock { padding-inline: 12px; }
   .ai-composer footer { align-items: flex-start; gap: 10px; flex-direction: column; }
 }
+
+.fleet-toolbar { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.fleet-tabs { flex-wrap: wrap; }
+.fleet-agent-card { min-height: 390px; }
+.fleet-stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0; }
+.fleet-stat-row span { padding: 9px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font-size: 11px; text-transform: uppercase; }
+.fleet-stat-row strong { display: block; color: var(--text); font-size: 18px; margin-bottom: 3px; }
+.fleet-error { display: block; color: #e7a67d; background: rgba(157, 74, 38, .13); padding: 9px; border-radius: 8px; overflow-wrap: anywhere; }
+.fleet-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.fleet-actions button, .fleet-actions a { width: auto; min-height: 34px; }
+.fleet-panel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.fleet-panel { min-height: 220px; }
+.fleet-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0; }
+.fleet-kpis div { background: rgba(255,255,255,.025); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.fleet-kpis strong { display: block; font-size: 22px; }
+.fleet-kpis span { color: var(--muted); font-size: 11px; }
+.fleet-domain-metrics { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.fleet-domain-metrics span { border: 1px solid var(--line); border-radius: 999px; padding: 6px 9px; color: var(--muted); font-size: 11px; }
+.fleet-domain-metrics b { color: var(--text); margin-right: 5px; }
+.fleet-table { display: grid; margin: 14px 0; }
+.fleet-table > div { display: grid; grid-template-columns: 1.2fr 1.4fr .8fr .8fr; gap: 12px; padding: 11px 8px; border-bottom: 1px solid var(--line); align-items: center; }
+.fleet-table__head { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .08em; }
+.fleet-skill-list { display: flex; flex-direction: column; gap: 7px; margin-top: 14px; }
+.fleet-skill-list span { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line); padding: 8px 0; color: var(--muted); }
+.fleet-skill-list b { color: var(--text); font-weight: 600; }
+.fleet-security-layout, .fleet-learning-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, .85fr); gap: 14px; }
+.incident-list, .control-ledger, .learning-ledger { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.incident-card, .learning-ledger article { border: 1px solid var(--line); background: rgba(255,255,255,.018); border-radius: 14px; padding: 15px; }
+.incident-card header { display: flex; align-items: center; gap: 9px; }
+.incident-card header small { margin-left: auto; color: var(--muted); }
+.incident-card h3, .learning-ledger h3 { margin: 12px 0 6px; }
+.incident-section { display: flex; gap: 10px; color: var(--muted); margin: 10px 0; }
+.incident-section strong { color: var(--text); }
+.incident-card details { border-top: 1px solid var(--line); padding-top: 10px; }
+.incident-card summary { cursor: pointer; color: var(--muted); }
+.incident-card pre { max-height: 220px; overflow: auto; white-space: pre-wrap; font-size: 11px; color: var(--muted); }
+.incident-card li { margin-bottom: 5px; color: var(--muted); }
+.control-ledger > div { display: flex; align-items: flex-start; gap: 10px; border-bottom: 1px solid var(--line); padding: 9px 0; }
+.control-ledger > div > div { display: flex; flex-direction: column; gap: 3px; }
+.control-ledger span, .control-ledger small { color: var(--muted); }
+.fleet-learning-form { display: flex; flex-direction: column; gap: 11px; margin-top: 14px; }
+.fleet-learning-form label { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 12px; }
+.fleet-learning-form textarea { min-height: 180px; resize: vertical; }
+.learning-ledger article > div { display: flex; align-items: center; justify-content: space-between; }
+.learning-ledger p { color: var(--muted); }
+.learning-ledger button { margin-top: 10px; display: inline-flex; gap: 6px; align-items: center; }
+
+@media (max-width: 900px) {
+  .fleet-toolbar, .fleet-security-layout, .fleet-learning-layout { display: flex; flex-direction: column; align-items: stretch; }
+  .fleet-table > div { grid-template-columns: 1fr 1fr; }
+  .fleet-kpis { grid-template-columns: 1fr; }
+}

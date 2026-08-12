@@ -86,6 +86,82 @@ export type Agent = {
   capabilities: string[];
   skills: Array<{ id: string; name: string; category: string; version: string; status: string }>;
 };
+export type IndependentAgent = Agent & {
+  bridge: {
+    url: string;
+    dashboard_url?: string | null;
+    enabled: boolean;
+    contract_version: string;
+    last_seen_at?: string | null;
+    last_status: string;
+    last_error?: string | null;
+  };
+  snapshot: {
+    observed_at?: string;
+    identity?: { agent_id: string; display_name?: string; agent_version?: string; capabilities?: string[] };
+    health?: { status?: string; state?: string; observed_at?: string; checks?: Array<Record<string, unknown>> };
+    metrics?: {
+      tasks_total?: number;
+      tasks_by_status?: Record<string, number>;
+      failure_rate?: number;
+      domain?: Record<string, number>;
+      resources?: { cpu_percent?: number; memory_percent?: number; rss_mb?: number };
+    };
+    tasks?: Array<{ task_id: string; task_type: string; status: string; created_at?: string; updated_at?: string }>;
+    approvals?: Array<Record<string, unknown>>;
+    security_events?: Array<Record<string, unknown>>;
+    skills?: Array<Record<string, unknown>>;
+    controls?: { quarantined?: boolean; quarantine_reason?: string | null; paused_capabilities?: string[]; updated_at?: string };
+    learning?: Array<Record<string, unknown>>;
+  };
+  open_incidents: number;
+};
+export type AgentIncident = {
+  id: string;
+  agent_id: string;
+  severity: "low" | "medium" | "high" | "critical";
+  incident_type: string;
+  title: string;
+  status: "open" | "contained" | "resolved";
+  capability?: string | null;
+  report: {
+    summary?: string;
+    evidence?: Record<string, unknown>;
+    action_taken?: Record<string, unknown>;
+    possible_solutions?: string[];
+    recovery_steps?: string[];
+    notification_state?: string;
+    phone_notification_state?: string;
+  };
+  detected_at: string;
+  resolved_at?: string | null;
+};
+export type AgentControl = {
+  id: string;
+  agent_id: string;
+  action: string;
+  capability?: string | null;
+  reason: string;
+  source: "automatic" | "owner";
+  outcome: string;
+  details: Record<string, unknown>;
+  created_at: string;
+};
+export type AgentLearningUpdate = {
+  id: string;
+  agent_id: string;
+  course_id?: string | null;
+  title: string;
+  source: string;
+  content_sha256: string;
+  content_preview: string;
+  risk_level: string;
+  status: string;
+  evaluation: Record<string, unknown>;
+  deployment: Record<string, unknown>;
+  created_at: string;
+  deployed_at?: string | null;
+};
 export type Skill = {
   id: string;
   name: string;
@@ -283,6 +359,10 @@ export type Bootstrap = {
   projects: Project[];
   conversations: Conversation[];
   agents: Agent[];
+  agent_fleet: IndependentAgent[];
+  agent_incidents: AgentIncident[];
+  agent_controls: AgentControl[];
+  agent_learning_updates: AgentLearningUpdate[];
   skills: Skill[];
   plugins: Plugin[];
   approvals: Approval[];

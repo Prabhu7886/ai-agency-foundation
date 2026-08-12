@@ -1,0 +1,244 @@
+"""Run an authenticated loopback Agent Bridge for Commerce or Career Studio."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import hmac
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import psutil
+import uvicorn
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from pydantic import BaseModel, Field
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from agents.fleet_bridge_state import FleetBridgeState
+from utils.encryption import KeyManager
+
+
+CONTRACT_VERSION = "1.0"
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class ControlRequest(BaseModel):
+    action: str = Field(max_length=80)
+    capability: str | None = Field(default=None, max_length=120)
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class LearningRequest(BaseModel):
+    update_id: str = Field(min_length=2, max_length=120)
+    title: str = Field(min_length=3, max_length=300)
+    source: str = Field(min_length=2, max_length=1000)
+    content: str = Field(min_length=40, max_length=50_000)
+    content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    risk_level: str = Field(max_length=20)
+    evaluation: dict[str, Any]
+
+
+class RollbackRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class RuntimeAdapter:
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+        if kind == "commerce":
+            from agents.commerce.agent import CommerceAgent
+
+            self.agent = CommerceAgent()
+            self.agent.repository.database.setup_sqlcipher()
+            self.agent_id = "aegis-commerce"
+        elif kind == "career":
+            from agents.career_agent import CareerAgent
+
+            self.agent = CareerAgent()
+            self.agent_id = "aegis-career-studio"
+        else:
+            raise ValueError("Agent Bridge kind must be commerce or career")
+        self.state = FleetBridgeState(self.agent_id)
+
+    def identity(self) -> dict[str, Any]:
+        if self.kind == "commerce":
+            identity = self.agent.identity.model_dump(mode="json")
+            identity["prohibited_actions"] = ["unapproved_external_write", "credential_storage", "approval_bypass"]
+            return identity
+        identity = self.agent.fleet_identity()
+        identity["agent_version"] = self.agent.report_status()["version"]
+        identity["supervisor_agent_id"] = "aegis"
+        identity["supported_platforms"] = ["local-career-studio"]
+        identity["external_write_policy"] = "disabled"
+        return identity
+
+    def health(self) -> dict[str, Any]:
+        raw = self.agent.fleet_health()
+        if hasattr(raw, "model_dump"):
+            raw = raw.model_dump(mode="json")
+        state = str(raw.get("status") or raw.get("state") or "degraded")
+        if self.state.public_status()["quarantined"]:
+            state = "quarantined"
+        return {**raw, "status": state, "observed_at": raw.get("observed_at") or raw.get("last_heartbeat") or utc_now()}
+
+    def metrics(self) -> dict[str, Any]:
+        if self.kind == "commerce":
+            with self.agent.repository.database.connection() as connection:
+                task_rows = connection.execute("SELECT status, COUNT(*) FROM commerce_tasks GROUP BY status").fetchall()
+                tasks_by_status = {str(row[0]): int(row[1]) for row in task_rows}
+                opportunities = int(connection.execute("SELECT COUNT(*) FROM commerce_opportunities").fetchone()[0])
+                products = int(connection.execute("SELECT COUNT(*) FROM commerce_products").fetchone()[0])
+                pending_approvals = int(
+                    connection.execute("SELECT COUNT(*) FROM commerce_approvals WHERE status = 'pending'").fetchone()[0]
+                )
+            domain = {"opportunities": opportunities, "products": products, "pending_approvals": pending_approvals}
+        else:
+            workspace = self.agent.workspace()
+            tasks_by_status = {"completed": len(workspace.get("resumes", [])) + len(workspace.get("interviews", []))}
+            domain = {
+                "profile_facts": len(workspace.get("profile", {}).get("facts", [])),
+                "jobs": len(workspace.get("jobs", [])),
+                "resumes": len(workspace.get("resumes", [])),
+                "interviews": len(workspace.get("interviews", [])),
+            }
+        total = sum(tasks_by_status.values())
+        failed = tasks_by_status.get("failed", 0)
+        process = psutil.Process(os.getpid())
+        return {
+            "tasks_total": total,
+            "tasks_by_status": tasks_by_status,
+            "failure_rate": round(failed / total, 4) if total else 0,
+            "domain": domain,
+            "resources": {
+                "cpu_percent": process.cpu_percent(interval=None),
+                "memory_percent": round(process.memory_percent(), 2),
+                "rss_mb": round(process.memory_info().rss / 1024 / 1024, 1),
+            },
+        }
+
+    def tasks(self) -> list[dict[str, Any]]:
+        if self.kind == "commerce":
+            with self.agent.repository.database.connection() as connection:
+                rows = connection.execute(
+                    """SELECT task_id, task_type, status, created_at, updated_at
+                    FROM commerce_tasks ORDER BY updated_at DESC LIMIT 25"""
+                ).fetchall()
+            return [
+                {"task_id": row[0], "task_type": row[1], "status": row[2], "created_at": row[3], "updated_at": row[4]}
+                for row in rows
+            ]
+        workspace = self.agent.workspace()
+        items: list[dict[str, Any]] = []
+        for category in ("jobs", "resumes", "interviews"):
+            for item in reversed(workspace.get(category, [])):
+                items.append(
+                    {
+                        "task_id": str(item.get("id", "")),
+                        "task_type": category[:-1],
+                        "status": "completed",
+                        "created_at": item.get("created_at") or item.get("captured_at") or workspace.get("updated_at"),
+                        "updated_at": item.get("updated_at") or item.get("created_at") or workspace.get("updated_at"),
+                    }
+                )
+        return items[:25]
+
+    def approvals(self) -> list[dict[str, Any]]:
+        if self.kind != "commerce":
+            return []
+        with self.agent.repository.database.connection() as connection:
+            rows = connection.execute(
+                """SELECT approval_id, task_id, action_type, platform, target, summary, risk_level,
+                requested_at, expires_at, status FROM commerce_approvals ORDER BY requested_at DESC LIMIT 25"""
+            ).fetchall()
+        keys = ["approval_id", "task_id", "action_type", "platform", "target", "summary", "risk_level", "requested_at", "expires_at", "status"]
+        return [dict(zip(keys, row)) for row in rows]
+
+    def security_events(self) -> list[dict[str, Any]]:
+        if self.kind != "commerce":
+            return self.state.load().get("security_events", [])[-25:]
+        with self.agent.repository.database.connection() as connection:
+            rows = connection.execute(
+                """SELECT event_id, task_id, event_type, severity, occurred_at, summary, containment
+                FROM commerce_security_events ORDER BY occurred_at DESC LIMIT 25"""
+            ).fetchall()
+        keys = ["event_id", "task_id", "event_type", "severity", "occurred_at", "summary", "containment"]
+        return [dict(zip(keys, row)) for row in rows]
+
+    def skills(self) -> list[dict[str, Any]]:
+        if self.kind == "commerce":
+            return [item.model_dump(mode="json") for item in self.agent.skill_versions()]
+        report = self.agent.skill_report()
+        return [{"skill_id": key, "version": value, "implementation": "career-studio"} for key, value in report["skills"].items()]
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "contract_version": CONTRACT_VERSION,
+            "observed_at": utc_now(),
+            "identity": self.identity(),
+            "health": self.health(),
+            "metrics": self.metrics(),
+            "tasks": self.tasks(),
+            "approvals": self.approvals(),
+            "security_events": self.security_events(),
+            "skills": self.skills(),
+            "controls": self.state.public_status(),
+            "learning": self.state.learning_report(),
+        }
+
+
+def create_app(kind: str) -> FastAPI:
+    runtime = RuntimeAdapter(kind)
+    app = FastAPI(title=f"{runtime.agent_id} Agent Bridge", version=CONTRACT_VERSION, docs_url=None, redoc_url=None)
+
+    async def authenticate(request: Request, x_aegis_bridge: str | None = Header(default=None)) -> None:
+        if not request.client or request.client.host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
+            raise HTTPException(status_code=403, detail="Agent Bridge accepts loopback clients only")
+        expected = hmac.new(
+            KeyManager().master_key(),
+            f"agent-bridge-v1:{runtime.agent_id}".encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        if not x_aegis_bridge or not hmac.compare_digest(x_aegis_bridge, expected):
+            raise HTTPException(status_code=401, detail="Authenticated Aegis bridge token required")
+
+    @app.get("/v1/snapshot", dependencies=[Depends(authenticate)])
+    async def snapshot() -> dict[str, Any]:
+        return runtime.snapshot()
+
+    @app.post("/v1/control", dependencies=[Depends(authenticate)])
+    async def control(payload: ControlRequest) -> dict[str, Any]:
+        return runtime.state.apply_control(payload.action, payload.capability, payload.reason)
+
+    @app.post("/v1/learning", dependencies=[Depends(authenticate)])
+    async def learning(payload: LearningRequest) -> dict[str, Any]:
+        return runtime.state.deploy_learning(payload.model_dump())
+
+    @app.post("/v1/learning/{update_id}/rollback", dependencies=[Depends(authenticate)])
+    async def rollback(update_id: str, payload: RollbackRequest) -> dict[str, Any]:
+        return runtime.state.rollback_learning(update_id, payload.reason)
+
+    app.state.runtime = runtime
+    return app
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run a local authenticated Aegis Agent Bridge")
+    parser.add_argument("--agent", choices=["commerce", "career"], required=True)
+    parser.add_argument("--port", type=int, required=True)
+    args = parser.parse_args()
+    if not 1024 <= args.port <= 65535:
+        raise SystemExit("Agent Bridge port must be between 1024 and 65535")
+    uvicorn.run(create_app(args.agent), host="127.0.0.1", port=args.port, access_log=False)
+
+
+if __name__ == "__main__":
+    main()

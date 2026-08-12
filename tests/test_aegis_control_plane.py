@@ -36,8 +36,9 @@ def store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AegisStore:
 
 def test_registry_seeds_internal_engineering_agent_and_skills(store: AegisStore) -> None:
     agents = store.list_agents()
-    assert [agent["name"] for agent in agents] == ["Internal Engineering"]
-    assert {skill["name"] for skill in agents[0]["skills"]} == {"Secure Coding", "Security Review"}
+    assert {agent["name"] for agent in agents} == {"Aegis Career Studio", "Aegis Commerce", "Internal Engineering"}
+    engineering = next(agent for agent in agents if agent["name"] == "Internal Engineering")
+    assert {skill["name"] for skill in engineering["skills"]} == {"Secure Coding", "Security Review"}
     assert "Content Studio" in {skill["name"] for skill in store.list_skills()}
 
 

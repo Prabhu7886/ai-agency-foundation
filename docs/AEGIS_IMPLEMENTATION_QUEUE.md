@@ -25,4 +25,19 @@ Every specialist agent connected to Aegis must implement the same bounded contra
 6. Security events: permission failures, secret/PII detection, policy violations, and unsafe-output alerts.
 7. Skill reporting: skill IDs and versions used, evaluation results, proposed improvements, and compatibility.
 
-The E-commerce Agent and Resume & Interview Prep Agent will be designed in their dedicated Codex tasks. Their approved contracts will be registered here before either receives live authority.
+Commerce and Career Studio now implement the approved local bridge contract and remain independent runtimes. Aegis monitors sanitized telemetry, enforces capability or full-agent containment, records incident reports, and distributes evaluated learning updates. Direct task dispatch remains a later authority decision.
+
+## Agent Fleet supervision delivery
+
+| Step | Result | State |
+|---:|---|---|
+| 1 | Reconciled Commerce and Career behind a common bridge without merging private stores | COMPLETE |
+| 2 | Versioned authenticated loopback Agent Bridge | COMPLETE |
+| 3 | Live Agent Fleet status, domain metrics, tasks, approvals, skills, and studio links | COMPLETE |
+| 4 | Threshold-based abnormal-behavior detection | COMPLETE |
+| 5 | Capability pause, severe-threat quarantine, incident reports, and recovery approvals | COMPLETE |
+| 6 | Completed-course low-risk auto-deployment plus major-update approvals and rollback | COMPLETE |
+| 7 | Agent Fleet performance, task, skill, security, incident, control, and learning views | COMPLETE |
+| 8 | Failure-path and policy tests | COMPLETE |
+| 9 | Operational and recovery documentation | COMPLETE |
+| 10 | Business-phone notification channel | OWNER DECISION NEXT |
