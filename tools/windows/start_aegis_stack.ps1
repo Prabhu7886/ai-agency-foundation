@@ -6,6 +6,12 @@ param(
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path -LiteralPath $AegisRoot).Path
 $python = (Resolve-Path -LiteralPath $AegisPythonPath).Path
+$pythonwCandidate = Join-Path (Split-Path -Parent $python) "pythonw.exe"
+$aegisPython = if (Test-Path -LiteralPath $pythonwCandidate -PathType Leaf) {
+    (Resolve-Path -LiteralPath $pythonwCandidate).Path
+} else {
+    $python
+}
 $bridgeScript = Join-Path $root "tools\windows\start_agent_bridges.ps1"
 
 if (-not (Test-Path -LiteralPath $bridgeScript -PathType Leaf)) {
@@ -25,6 +31,6 @@ if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
     throw "Aegis desktop launcher is missing: $launcher"
 }
 
-Start-Process -FilePath $python -ArgumentList @($launcher) -WorkingDirectory $root -WindowStyle Hidden
+Start-Process -FilePath $aegisPython -ArgumentList @($launcher) -WorkingDirectory $root -WindowStyle Hidden
 Write-Output "Started Aegis and its supervised independent-agent bridges."
 Write-Output "Ollama was not started automatically; controlled-maintenance policy remains unchanged."

@@ -4,7 +4,7 @@ Verified for Aegis 0.9.0 on 2026-08-12.
 
 ## Start and verify
 
-Run `tools\windows\start_aegis_stack.ps1`. It starts the Aegis loopback service and the Commerce and Career supervision bridges only when their ports are not already listening. It never starts Ollama or opens controlled maintenance.
+Run `tools\windows\start_aegis_stack.ps1`. It starts the Aegis loopback service with the virtual environment's no-console Python launcher and starts the Commerce and Career supervision bridges only when their ports are not already listening. It never starts Ollama or opens controlled maintenance.
 
 Verify these loopback endpoints:
 
