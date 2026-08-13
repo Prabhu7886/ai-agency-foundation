@@ -38,6 +38,7 @@ class LocalModelRouter:
         "general": {"model": "llama3.1:8b", "label": "Llama 3.1 8B"},
         "coding": {"model": "deepseek-coder-v2:16b", "label": "DeepSeek Coder V2 16B"},
         "analysis": {"model": "qwen2.5:14b", "label": "Qwen 2.5 14B"},
+        "vision": {"model": "gemma3:4b", "label": "Gemma 3 4B Vision"},
     }
 
     def __init__(self, endpoint: str = "http://127.0.0.1:11434", config_path: Path | None = None) -> None:
@@ -99,6 +100,37 @@ class LocalModelRouter:
             response.raise_for_status()
             unloaded.append(model)
         return {"selected_model": selected, "unloaded_models": unloaded, "switched": bool(unloaded)}
+
+    def select_vision(self) -> dict[str, Any]:
+        """Select the dedicated image-capable model without falling back to a text-only model."""
+        catalog, active = self._inventory()
+        requested = self.routes["vision"]
+        selected = str(requested["model"])
+        if selected not in catalog:
+            raise RuntimeError(
+                f"Local vision model {selected} is not installed; screen analysis remains unavailable"
+            )
+        model_size = int(catalog[selected].get("size", 0))
+        return {
+            "category": "vision",
+            "model": selected,
+            "label": str(requested.get("label") or selected),
+            "reason": "Owner requested analysis of one consented screen frame",
+            "resource_fit": "gpu" if not model_size or model_size <= self.vram_limit_mb * 1024 * 1024 else "hybrid_gpu_ram",
+            "fallback_from": None,
+            "installed": True,
+            "already_loaded": selected in active,
+            "one_model_at_a_time": True,
+        }
+
+    def release(self, model: str) -> None:
+        """Unload a model after an isolated media turn so scarce VRAM is returned."""
+        response = requests.post(
+            f"{self.endpoint}/api/generate",
+            json={"model": model, "keep_alive": 0},
+            timeout=(3, 30),
+        )
+        response.raise_for_status()
 
     def gateway(self, route: dict[str, Any]) -> LocalModelGateway:
         return LocalModelGateway(self.endpoint, model=str(route["model"]))

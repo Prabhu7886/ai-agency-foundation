@@ -279,6 +279,24 @@ export function decideLearningMemory(memoryId: string, status: "confirmed" | "di
   return request(`/api/learning/memory/${memoryId}`, { method: "PATCH", body: JSON.stringify({ status }) });
 }
 
+export function submitResponseFeedback(
+  messageId: string,
+  rating: "helpful" | "too_generic" | "incorrect" | "missed_intent",
+  correction = "",
+): Promise<Record<string, unknown>> {
+  return request(`/api/conversation-messages/${messageId}/feedback`, {
+    method: "POST",
+    body: JSON.stringify({ rating, correction }),
+  });
+}
+
+export function decideTrainingCandidate(candidateId: string, status: "approved" | "rejected"): Promise<Record<string, unknown>> {
+  return request(`/api/training-candidates/${candidateId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+}
+
 export function updateIdentity(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   return request("/api/identity", { method: "PATCH", body: JSON.stringify(payload) });
 }
@@ -295,6 +313,18 @@ export function finishCompanionSession(sessionId: string, status: "completed" | 
   return request(`/api/identity/companion-sessions/${sessionId}/complete`, {
     method: "POST",
     body: JSON.stringify({ status, summary }),
+  });
+}
+
+export function analyzeScreenFrame(sessionId: string, imageDataUrl: string, question: string): Promise<{
+  analysis: string;
+  model: string;
+  provider: "ollama-local";
+  raw_frame_retention: "discarded_after_inference";
+}> {
+  return request("/api/identity/screen-analysis", {
+    method: "POST",
+    body: JSON.stringify({ session_id: sessionId, image_data_url: imageDataUrl, question }),
   });
 }
 

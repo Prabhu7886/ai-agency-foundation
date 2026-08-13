@@ -22,6 +22,7 @@ from aegis_core.prompt_compiler import PromptCompiler
 from aegis_core.research import WebResearchService
 from aegis_core.schemas import ChatRequest
 from aegis_core.security_sentinel import SecuritySentinelService
+from aegis_core.screen_vision import ScreenVisionService
 from aegis_core.store import AegisStore
 from aegis_core.world_pulse import WorldPulseService
 from databases.setup_databases import DatabaseSetup
@@ -238,6 +239,19 @@ def test_prompt_compiler_fails_closed_to_bounded_fallback() -> None:
     assert "Do not expand authority" in compiled["constraints"]
 
 
+def test_prompt_compiler_uses_fast_natural_wrapper_for_ordinary_conversation() -> None:
+    class MustNotRunGateway:
+        model = "unused"
+
+        def generate(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            raise AssertionError("Ordinary conversation should not require a second model rewrite")
+
+    compiled = PromptCompiler(MustNotRunGateway()).compile("What do you think about this idea?", {"name": "Aegis"})
+    assert compiled["compiler_mode"] == "conversational-direct"
+    assert compiled["risk_level"] == "low"
+    assert "professional, warm, realistic conversation" in compiled["compiled_prompt"]
+
+
 def test_prompt_compiler_keeps_owner_constraints_authoritative() -> None:
     class RewritingGateway:
         model = "test-local"
@@ -344,6 +358,65 @@ def test_encrypted_conversation_persists_bounded_history(store: AegisStore, tmp_
     store.archive_conversation(conversation["id"])
     store.delete_conversation(conversation["id"])
     assert store.get_conversation(conversation["id"]) is None
+
+
+def test_response_feedback_is_encrypted_and_requires_owner_review(store: AegisStore, tmp_path: Path) -> None:
+    project = store.create_project("Feedback Lab", "Private improvement", tmp_path / "projects" / "feedback", None)
+    conversation = store.create_conversation(project["id"])
+    store.add_conversation_message(conversation["id"], "user", "Explain this simply", provider="owner")
+    answer = store.add_conversation_message(
+        conversation["id"], "assistant", "A long generic answer", provider="ollama-local", model="test-local"
+    )
+    feedback = store.create_response_feedback(answer["id"], "too_generic", "Lead with one direct sentence.")
+    candidate = store.list_training_candidates()[0]
+    assert feedback["rating"] == "too_generic"
+    assert candidate["status"] == "proposed"
+    assert b"Lead with one direct sentence" not in store.database.database_path.read_bytes()
+    approved = store.decide_training_candidate(candidate["id"], "approved")
+    assert approved["status"] == "approved"
+    assert any(item["statement"] == "Lead with one direct sentence." for item in store.list_learning_memory())
+
+
+def test_screen_vision_validates_frame_and_discards_model_after_inference() -> None:
+    class FakeGateway:
+        model = "gemma3:4b"
+
+        def generate(self, _prompt: str, **kwargs: object) -> dict[str, object]:
+            assert kwargs["images"]
+            return {"response": "A document editor is visible. No password field is visible."}
+
+    class FakeRouter:
+        released: list[str] = []
+
+        def select_vision(self) -> dict[str, object]:
+            return {"model": "gemma3:4b", "label": "Gemma", "category": "vision"}
+
+        def prepare(self, _route: dict[str, object]) -> dict[str, object]:
+            return {"unloaded_models": ["llama3.1:8b"], "switched": True}
+
+        def gateway(self, _route: dict[str, object]) -> FakeGateway:
+            return FakeGateway()
+
+        def release(self, model: str) -> None:
+            self.released.append(model)
+
+    png = b"\x89PNG\r\n\x1a\n" + b"bounded-test-frame"
+    encoded = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    router = FakeRouter()
+    result = ScreenVisionService(router).analyze(
+        encoded,
+        "What is visible?",
+        {"session_type": "study", "purpose": "Learn", "privacy_mode": "standard"},
+    )
+    assert result["provider"] == "ollama-local"
+    assert result["raw_frame_retention"] == "discarded_after_inference"
+    assert router.released == ["gemma3:4b"]
+    with pytest.raises(ValueError, match="declared image type"):
+        ScreenVisionService(router).analyze(
+            "data:image/png;base64," + base64.b64encode(b"not-png").decode("ascii"),
+            "What is visible?",
+            {},
+        )
 
 
 def test_model_gateway_streams_local_tokens(monkeypatch: pytest.MonkeyPatch) -> None:

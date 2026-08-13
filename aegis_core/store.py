@@ -353,6 +353,133 @@ class AegisStore:
             )
         return conversation
 
+    def create_response_feedback(self, message_id: str, rating: str, correction: str = "") -> dict[str, Any]:
+        if rating not in {"helpful", "too_generic", "incorrect", "missed_intent"}:
+            raise ValueError("Unsupported response feedback rating")
+        clean_correction = " ".join(correction.replace("\x00", " ").split())[:10_000]
+        now = utc_now()
+        feedback_id = new_id("feedback")
+        candidate_id = new_id("training")
+        with self.database.connection() as connection:
+            message = self._row(
+                connection.execute(
+                    """SELECT m.*, c.project_id FROM aegis_conversation_messages m
+                    JOIN aegis_conversations c ON c.id = m.conversation_id
+                    WHERE m.id = ?""",
+                    (message_id,),
+                )
+            )
+            if not message or message["role"] != "assistant":
+                raise KeyError("Assistant message not found")
+            owner_message = self._row(
+                connection.execute(
+                    """SELECT content FROM aegis_conversation_messages
+                    WHERE conversation_id = ? AND role = 'user' AND created_at <= ?
+                    ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+                    (message["conversation_id"], message["created_at"]),
+                )
+            )
+            existing = self._row(
+                connection.execute("SELECT id FROM aegis_response_feedback WHERE message_id = ?", (message_id,))
+            )
+            if existing:
+                feedback_id = existing["id"]
+                connection.execute(
+                    "UPDATE aegis_response_feedback SET rating = ?, correction = ?, updated_at = ? WHERE id = ?",
+                    (rating, clean_correction, now, feedback_id),
+                )
+                connection.execute(
+                    """UPDATE aegis_training_candidates SET rating = ?, correction = ?, status = 'proposed',
+                    decided_at = NULL WHERE feedback_id = ?""",
+                    (rating, clean_correction, feedback_id),
+                )
+            else:
+                connection.execute(
+                    """INSERT INTO aegis_response_feedback
+                    (id, message_id, rating, correction, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)""",
+                    (feedback_id, message_id, rating, clean_correction, now, now),
+                )
+                connection.execute(
+                    """INSERT INTO aegis_training_candidates
+                    (id, feedback_id, conversation_id, prompt_excerpt, response_excerpt, correction,
+                     rating, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?)""",
+                    (
+                        candidate_id,
+                        feedback_id,
+                        message["conversation_id"],
+                        str((owner_message or {}).get("content", ""))[:4_000],
+                        str(message["content"])[:4_000],
+                        clean_correction,
+                        rating,
+                        now,
+                    ),
+                )
+            self._activity(
+                connection,
+                "response_feedback_recorded",
+                f"Recorded owner feedback: {rating.replace('_', ' ')}",
+                "conversation_message",
+                message_id,
+            )
+        return next(item for item in self.list_response_feedback() if item["id"] == feedback_id)
+
+    def list_response_feedback(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self.database.connection() as connection:
+            return self._rows(
+                connection.execute(
+                    "SELECT * FROM aegis_response_feedback ORDER BY updated_at DESC LIMIT ?",
+                    (max(1, min(limit, 500)),),
+                )
+            )
+
+    def list_training_candidates(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self.database.connection() as connection:
+            return self._rows(
+                connection.execute(
+                    "SELECT * FROM aegis_training_candidates ORDER BY created_at DESC LIMIT ?",
+                    (max(1, min(limit, 500)),),
+                )
+            )
+
+    def decide_training_candidate(self, candidate_id: str, status: str) -> dict[str, Any]:
+        if status not in {"approved", "rejected"}:
+            raise ValueError("Unsupported training candidate decision")
+        now = utc_now()
+        with self.database.connection() as connection:
+            candidate = self._row(
+                connection.execute("SELECT * FROM aegis_training_candidates WHERE id = ?", (candidate_id,))
+            )
+            if not candidate:
+                raise KeyError("Training candidate not found")
+            connection.execute(
+                "UPDATE aegis_training_candidates SET status = ?, decided_at = ? WHERE id = ?",
+                (status, now, candidate_id),
+            )
+            if status == "approved" and candidate["correction"]:
+                memory_id = f"memory-{candidate_id}"
+                connection.execute(
+                    """INSERT OR IGNORE INTO aegis_learning_memory
+                    (id, kind, category, statement, reason, confidence, status, affects_authority, created_at, updated_at)
+                    VALUES (?, 'explicit', 'communication', ?, ?, 1, 'confirmed', 0, ?, ?)""",
+                    (
+                        memory_id,
+                        candidate["correction"],
+                        f"Owner-approved response correction from {candidate_id}",
+                        now,
+                        now,
+                    ),
+                )
+            self._activity(
+                connection,
+                "training_candidate_decided",
+                f"Training candidate {status}",
+                "training_candidate",
+                candidate_id,
+            )
+        return next(item for item in self.list_training_candidates() if item["id"] == candidate_id)
+
     def _conversation_messages(self, connection: Any, conversation_id: str, limit: int) -> list[dict[str, Any]]:
         if limit <= 0:
             return []

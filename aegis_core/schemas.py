@@ -77,6 +77,15 @@ class ConversationCreate(BaseModel):
     title: str = Field(default="New conversation", max_length=120)
 
 
+class ResponseFeedbackCreate(BaseModel):
+    rating: Literal["helpful", "too_generic", "incorrect", "missed_intent"]
+    correction: str = Field(default="", max_length=10_000)
+
+
+class TrainingCandidateDecision(BaseModel):
+    status: Literal["approved", "rejected"]
+
+
 class PromptCompileRequest(BaseModel):
     project_id: str = Field(min_length=2, max_length=100)
     message: str = Field(min_length=1, max_length=50_000)
@@ -279,6 +288,12 @@ class CompanionNoteCreate(BaseModel):
 class CompanionSessionComplete(BaseModel):
     status: Literal["completed", "aborted"] = "completed"
     summary: str = Field(default="", max_length=5_000)
+
+
+class ScreenAnalysisRequest(BaseModel):
+    session_id: str = Field(min_length=2, max_length=100)
+    image_data_url: str = Field(min_length=32, max_length=2_100_000)
+    question: str = Field(default="What is visible, and what should I pay attention to?", min_length=3, max_length=2_000)
 
 
 class AgentControlRequest(BaseModel):

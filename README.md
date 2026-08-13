@@ -115,7 +115,13 @@ powershell -ExecutionPolicy Bypass -File tools\windows\start_aegis_stack.ps1
 
 The launcher reuses healthy listeners, starts missing processes hidden, and deliberately does not start Ollama. Ollama remains subject to the controlled-maintenance policy.
 
-Open `http://127.0.0.1:8000`. The workspace provides Executive Home, AI Workspace, Agent Fleet, World Pulse, Opportunity Engine, Solution Factory, Approval Center, Security Sentinel, Aegis Hub, and Data Lab. Aegis Hub contains the encrypted owner-controlled digital identity, locked portrait and full-body assets, consented browser-only screen companion, private local voice, Aegis Academy course plans, and a visible controlled-learning ledger. AI Workspace includes private incognito turns that create no conversation, task, prompt, memory, or learning record. Approval Center separates Security & Operations from Business & Creative decisions while preserving one single-use audit trail.
+Open `http://127.0.0.1:8000`. The workspace provides Executive Home, AI Workspace, Agent Fleet, World Pulse, Opportunity Engine, Solution Factory, Approval Center, Security Sentinel, Aegis Hub, and Data Lab. Aegis Hub contains the encrypted owner-controlled digital identity, locked portrait and full-body assets, consented single-frame screen understanding, a browser-animated avatar preview, private local voice, Aegis Academy course plans, and visible controlled-learning ledgers. AI Workspace includes private incognito turns that create no conversation, task, prompt, memory, or learning record. Response feedback becomes an encrypted training candidate and changes Aegis only after owner review. Approval Center separates Security & Operations from Business & Creative decisions while preserving one single-use audit trail.
+
+Screen understanding uses `gemma3:4b` through loopback Ollama. Aegis captures no continuous video: the owner clicks to capture one downscaled frame, the backend validates it, analyzes it in memory, unloads the vision model, and discards the raw frame. The text analysis is retained only when the owner explicitly saves it as an encrypted companion note. If the model is absent, the dashboard reports the feature unavailable instead of falling back to a cloud or text-only model. Install the model only during the controlled Ollama maintenance window described above:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" pull gemma3:4b
+```
 
 Commerce and Career Studio remain independent applications. Start their authenticated loopback supervision bridges separately so Aegis can monitor them without owning their lifecycle:
 

@@ -14,6 +14,9 @@ The queue follows the approved order. Only one major workstream should be marked
 | 7 | Platform completion and hardening | COMPLETE FOR MVP | Search, encrypted backup approvals, restore drills, stack startup, and operations status | Production build, 53 backend tests, 23 Commerce tests, 17 Career tests, and operations runbook |
 | 8 | Digital identity control plane | COMPLETE FOR LOCAL MVP | Encrypted identity profile, locked portrait/full-body registry, consented companion sessions, and private incognito chat | 57 backend tests, TypeScript validation, production build, and digital identity contract |
 | 9 | Smart Hybrid API conversation | DEFERRED BY OWNER | Secure Platform key, $10 hard budget, public/sanitized routing, feedback ledger, and local fallback | Resume only after owner can authenticate to OpenAI Platform |
+| 10 | Local screen understanding | IMPLEMENTED / MODEL PENDING | One owner-triggered frame, optional edge crop, loopback-only in-memory vision, zero raw retention | Install `gemma3:4b` during controlled Ollama maintenance and run visual acceptance test |
+| 11 | Conversational learning | IMPLEMENTED | Natural low-risk prompt wrapper, encrypted ratings/corrections, owner-reviewed training candidates | Collect real owner feedback; do not fine-tune automatically |
+| 12 | Digital embodiment | PARTIAL | Full-body identity and browser idle/listening/speaking motion preview | Choose layered 2D asset or evaluate offline renderer before true lip sync |
 
 ## Agent Fleet integration contract
 

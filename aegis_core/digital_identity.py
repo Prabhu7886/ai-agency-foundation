@@ -28,16 +28,18 @@ class DigitalIdentityService:
             "screen_companion": {
                 "available": True,
                 "capture_boundary": "browser_permission_each_session",
-                "frame_destination": "local_browser_preview_only",
+                "frame_destination": "loopback_in_memory_on_owner_click",
                 "recording": False,
                 "automatic_visual_analysis": False,
-                "notes": "owner_controlled",
+                "raw_frame_retention": "none",
+                "notes": "owner_controlled_single_frame",
             },
             "production_readiness": {
                 "portrait": "active",
                 "full_body_master": "reference_ready",
-                "motion_rig": "planned",
-                "lip_sync": "planned",
+                "motion_preview": "active_browser_animation",
+                "motion_rig": "renderer_not_installed",
+                "lip_sync": "requires_layered_or_renderer_asset",
                 "public_identity_accounts": "not_connected",
             },
         }

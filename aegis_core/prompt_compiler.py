@@ -42,6 +42,11 @@ class PromptCompiler:
         r"^(reply|answer|confirm|explain|summarize|describe|list|compare|what|why|how|when|where|who|is|are|can|could|would)\b",
         re.IGNORECASE,
     )
+    EXECUTION_REQUEST = re.compile(
+        r"\b(build|create|implement|change|edit|delete|install|download|deploy|publish|push|commit|"
+        r"send|upload|run|execute|fix|write|move|rename|connect|authorize|purchase|pay)\b",
+        re.IGNORECASE,
+    )
 
     def __init__(self, gateway: LocalModelGateway) -> None:
         self.gateway = gateway
@@ -50,6 +55,8 @@ class PromptCompiler:
         started = perf_counter()
         original = " ".join(original_prompt.replace("\x00", " ").split())
         minimum_risk = self._minimum_risk(original)
+        if not self.EXECUTION_REQUEST.search(original) and minimum_risk == "low":
+            return self._conversation_rewrite(original, started)
         prompt = (
             f"{PROMPT_COMPILER_INSTRUCTIONS}\n\n"
             f"PROJECT CONTEXT:\n{json.dumps(project_context, ensure_ascii=False, default=str)[:4000]}\n\n"
@@ -74,6 +81,33 @@ class PromptCompiler:
             result["model"] = None
             result["rewrite_duration_ms"] = round((perf_counter() - started) * 1000)
             return result
+
+    @staticmethod
+    def _conversation_rewrite(original: str, started: float) -> dict[str, Any]:
+        """Silently wrap ordinary conversation without an expensive or rigid compiler turn."""
+        objective = "Respond directly and naturally to the owner's message"
+        compiled_prompt = (
+            f"OWNER MESSAGE (authoritative): {original}\n\n"
+            "Respond as Aegis in a professional, warm, realistic conversation. Answer the actual question "
+            "first; use relevant confirmed context; label uncertainty; do not invent current facts or claim "
+            "actions. Keep the depth proportional to the request and avoid an execution-plan format unless asked."
+        )
+        return {
+            "original_prompt": original,
+            "objective": objective,
+            "deliverable": "A direct, useful conversational response",
+            "context": [],
+            "constraints": ["Preserve owner intent", "Label uncertainty", "Do not invent execution"],
+            "execution_steps": ["Answer the owner's message naturally"],
+            "risk_level": "low",
+            "approvals_required": [],
+            "success_evidence": ["The response directly addresses the owner's message"],
+            "data_classification": "internal",
+            "compiled_prompt": compiled_prompt,
+            "compiler_mode": "conversational-direct",
+            "model": None,
+            "rewrite_duration_ms": round((perf_counter() - started) * 1000),
+        }
 
     @classmethod
     def _minimum_risk(cls, prompt: str) -> str:

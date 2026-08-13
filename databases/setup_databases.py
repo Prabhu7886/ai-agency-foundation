@@ -193,6 +193,32 @@ CREATE TABLE IF NOT EXISTS aegis_conversation_messages (
 CREATE INDEX IF NOT EXISTS idx_aegis_conversation_messages_thread
 ON aegis_conversation_messages(conversation_id, created_at);
 
+CREATE TABLE IF NOT EXISTS aegis_response_feedback (
+    id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL UNIQUE REFERENCES aegis_conversation_messages(id) ON DELETE CASCADE,
+    rating TEXT NOT NULL CHECK(rating IN ('helpful', 'too_generic', 'incorrect', 'missed_intent')),
+    correction TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_response_feedback_time
+ON aegis_response_feedback(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS aegis_training_candidates (
+    id TEXT PRIMARY KEY,
+    feedback_id TEXT NOT NULL UNIQUE REFERENCES aegis_response_feedback(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES aegis_conversations(id) ON DELETE CASCADE,
+    prompt_excerpt TEXT NOT NULL,
+    response_excerpt TEXT NOT NULL,
+    correction TEXT NOT NULL DEFAULT '',
+    rating TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN ('proposed', 'approved', 'rejected')),
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_training_candidates_status
+ON aegis_training_candidates(status, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS aegis_agent_registry (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -719,6 +745,8 @@ class DatabaseSetup:
             "aegis_identity_assets",
             "aegis_companion_sessions",
             "aegis_companion_notes",
+            "aegis_response_feedback",
+            "aegis_training_candidates",
         }
         missing = required - tables
         if missing:

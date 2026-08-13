@@ -34,6 +34,7 @@ from aegis_core.opportunity_engine import OpportunityEngineService
 from aegis_core.operations import OperationsService
 from aegis_core.prompt_compiler import PromptCompiler
 from aegis_core.research import WebResearchService
+from aegis_core.screen_vision import ScreenVisionService
 from aegis_core.schemas import (
     AcademyCourseCreate,
     AcademyCourseUpdate,
@@ -50,6 +51,8 @@ from aegis_core.schemas import (
     CompanionSessionCreate,
     CodexTaskRequest,
     ConversationCreate,
+    ResponseFeedbackCreate,
+    TrainingCandidateDecision,
     DataJobRequest,
     GitHubOperationRequest,
     IdentityProfileUpdate,
@@ -63,6 +66,7 @@ from aegis_core.schemas import (
     PromptCompileRequest,
     ResearchRequest,
     SecurityScanRequest,
+    ScreenAnalysisRequest,
     SkillEvaluationCreate,
     SkillReleaseRequest,
     SkillVersionCreate,
@@ -137,6 +141,7 @@ def create_app(
     agent_fleet = AgentFleetService(store)
     academy = AcademyService(store)
     identity = DigitalIdentityService(store)
+    screen_vision = ScreenVisionService(model_router)
     opportunity_engine = OpportunityEngineService(store)
     operations = OperationsService()
     session_token = secrets.token_urlsafe(32)
@@ -233,7 +238,7 @@ def create_app(
 
     app = FastAPI(
         title="Aegis Local Executive API",
-        version="0.10.0",
+        version="0.11.0",
         description="Local-first executive control plane built on the AI Agency security foundation.",
         lifespan=lifespan,
         docs_url="/api/docs" if os.getenv("AEGIS_ENABLE_API_DOCS", "false").lower() == "true" else None,
@@ -281,7 +286,7 @@ def create_app(
         codex_plugin = plugins.get("plugin-codex", {})
         local_status = await asyncio.to_thread(model_router.status)
         return {
-            "version": "0.10.0",
+            "version": "0.11.0",
             "workspaces": [item["label"] for item in WORKSPACES],
             "overview": store.overview(),
             "agents": [
@@ -324,6 +329,8 @@ def create_app(
                 "Audited project, agent, skill, and workspace inventory",
                 "Owner-controlled Aegis Hub with local voice, Academy plans, and reviewable learning memory",
                 "Encrypted digital identity profile, versioned avatar assets, and consented companion sessions",
+                "Owner-triggered single-frame screen understanding with zero raw-frame retention",
+                "Encrypted response feedback and owner-reviewed local training candidates",
                 "Dual approval queues backed by one single-use encrypted execution ledger",
                 "World Pulse niche filtering with an internal source brief reader",
                 "Opportunity-to-Solution handoff with approval-gated evidence stages",
@@ -363,7 +370,7 @@ def create_app(
             "status": "ok",
             "local_only": True,
             "service": "aegis",
-            "version": "0.10.0",
+            "version": "0.11.0",
             "database": "sqlcipher-required",
             "prompt_compiler": "required",
         }
@@ -421,7 +428,16 @@ def create_app(
             "academy_courses": store.list_academy_courses(),
             "containment_drills": store.list_containment_drills(),
             "learning_memory": store.list_learning_memory(),
-            "digital_identity": identity.status(),
+            "digital_identity": {
+                **identity.status(),
+                "screen_companion": {
+                    **identity.status()["screen_companion"],
+                    **screen_vision.status(),
+                    "automatic_visual_analysis": False,
+                },
+            },
+            "response_feedback": store.list_response_feedback(),
+            "training_candidates": store.list_training_candidates(),
             "operations": operations.status(),
             "voice": voice.status(),
             "activity": store.list_activity(),
@@ -774,6 +790,24 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"deleted": True}
+
+    @app.post("/api/conversation-messages/{message_id}/feedback", dependencies=[Depends(require_session)])
+    async def create_response_feedback(message_id: str, payload: ResponseFeedbackCreate) -> dict[str, Any]:
+        try:
+            return store.create_response_feedback(message_id, payload.rating, payload.correction)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.patch("/api/training-candidates/{candidate_id}", dependencies=[Depends(require_session)])
+    async def decide_training_candidate(candidate_id: str, payload: TrainingCandidateDecision) -> dict[str, Any]:
+        try:
+            return store.decide_training_candidate(candidate_id, payload.status)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/chat/stream", dependencies=[Depends(require_session)])
     async def stream_chat(payload: ChatRequest) -> StreamingResponse:
@@ -1478,6 +1512,33 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/identity/screen-analysis", dependencies=[Depends(require_session)])
+    async def analyze_companion_screen(payload: ScreenAnalysisRequest) -> dict[str, Any]:
+        session = next(
+            (item for item in store.list_companion_sessions(limit=100) if item["id"] == payload.session_id),
+            None,
+        )
+        if not session:
+            raise HTTPException(status_code=404, detail="Companion session not found")
+        if session["status"] != "active" or session["screen_access"] != "local_preview":
+            raise HTTPException(status_code=409, detail="An active screen-enabled companion session is required")
+        try:
+            async with model_turn_lock:
+                return await asyncio.to_thread(
+                    screen_vision.analyze,
+                    payload.image_data_url,
+                    payload.question,
+                    {
+                        "session_type": session["session_type"],
+                        "purpose": session["purpose"],
+                        "privacy_mode": session["privacy_mode"],
+                    },
+                )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/opportunity-cycles/{cycle_id}/run", dependencies=[Depends(require_session)])

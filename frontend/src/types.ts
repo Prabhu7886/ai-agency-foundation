@@ -1,6 +1,6 @@
 export type Workspace = { id: string; label: string; description: string };
 export type ModelRouting = {
-  category: "general" | "coding" | "analysis";
+  category: "general" | "coding" | "analysis" | "vision";
   model: string;
   label: string;
   reason: string;
@@ -264,6 +264,26 @@ export type WorldPulseSchedule = {
   status: "planned" | "paused";
   last_requested_at?: string | null;
 };
+export type ResponseFeedback = {
+  id: string;
+  message_id: string;
+  rating: "helpful" | "too_generic" | "incorrect" | "missed_intent";
+  correction: string;
+  created_at: string;
+  updated_at: string;
+};
+export type TrainingCandidate = {
+  id: string;
+  feedback_id: string;
+  conversation_id: string;
+  prompt_excerpt: string;
+  response_excerpt: string;
+  correction: string;
+  rating: string;
+  status: "proposed" | "approved" | "rejected";
+  created_at: string;
+  decided_at?: string | null;
+};
 export type IdentityProfile = {
   id: string;
   display_name: string;
@@ -313,6 +333,10 @@ export type DigitalIdentity = {
     recording: boolean;
     automatic_visual_analysis: boolean;
     notes: string;
+    model?: string;
+    raw_frame_retention?: string;
+    transport?: string;
+    error?: string;
   };
   production_readiness: Record<string, string>;
 };
@@ -457,6 +481,8 @@ export type Bootstrap = {
   academy_courses: AcademyCourse[];
   containment_drills: ContainmentDrill[];
   learning_memory: LearningMemory[];
+  response_feedback: ResponseFeedback[];
+  training_candidates: TrainingCandidate[];
   digital_identity: DigitalIdentity;
   operations: {
     backup_count: number;

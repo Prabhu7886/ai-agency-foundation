@@ -1,6 +1,6 @@
 # Aegis Digital Identity Contract
 
-Last verified: 2026-08-13 · Aegis 0.10.0
+Last verified: 2026-08-13 · Aegis 0.11.0
 
 ## Approved identity
 
@@ -34,7 +34,7 @@ The encrypted asset registry currently tracks:
 
 1. `identity-portrait-v1` — active face and upper-body identity reference.
 2. `identity-full-body-v1` — versioned full-body reference for future video production.
-3. `identity-motion-rig-v1` — planned motion and lip-sync package.
+3. `identity-motion-rig-v1` — browser motion preview active; offline render rig remains a separate planned package.
 
 The portrait and full-body assets are identity-locked. A future production pipeline must preserve the face, hairstyle, digital circuitry, executive clothing language, and explicit non-human identity. It may create scene-specific renders without silently replacing the master identity.
 
@@ -52,14 +52,26 @@ Browser-only live preview
         |
         +-- no frame upload
         +-- no frame recording
-        +-- no automatic visual analysis
+        +-- one owner-triggered frame at a time
+        +-- raw frame validated, analyzed in memory, then discarded
+        +-- no background watching or recording
         +-- owner may write explicit local notes
                     |
                     +-- ordinary encrypted note, or
                     +-- proposed learning candidate requiring review
 ```
 
-The current release does not claim that Aegis can understand the preview. Real screen understanding requires a separately evaluated local vision model, explicit frame sampling controls, visible capture state, redaction, resource limits, and new security tests.
+The current release implements bounded local screen understanding with the configured `gemma3:4b` Ollama model. Availability remains false until that model is installed. The owner must start a screen-enabled companion session, grant browser permission, optionally crop private edges, capture one visible frame, and click Analyze. The frame is downscaled in the browser, limited to 1.5 MB, validated by media signature, sent only to the loopback API, processed in memory, and discarded. Aegis never samples automatically. Only the returned text can be saved, and private incognito blocks that save.
+
+## Conversation improvement
+
+Ordinary discussion receives a lightweight hidden conversational rewrite rather than a second model-generated execution contract. This reduces delay and keeps the response natural. Requests that can change state still use the full bounded compiler and risk classification.
+
+The owner can mark a saved assistant answer Helpful, Too generic, Incorrect, or Missed intent. Each rating creates an encrypted local training candidate containing bounded excerpts. No model is fine-tuned automatically. A correction becomes a confirmed communication preference only after the owner approves it in Aegis Hub.
+
+## Avatar motion boundary
+
+The full-body identity has local idle, listening, and speaking presentation states rendered in the browser. This is motion-ready UI feedback, not phoneme-accurate lip sync. A production lip-sync renderer is deferred because the current master is not layered and the laptop has 8 GB VRAM; installing an unverified heavy renderer would compete with Ollama and is not justified yet.
 
 ## Learning governance
 
@@ -77,7 +89,7 @@ The local model now receives the encrypted identity profile and confirmed non-au
 ## Deferred work
 
 - OpenAI API and Smart Hybrid routing are deliberately deferred until the owner can complete Platform authentication.
-- Motion rigging, repeatable lip sync, and reusable video poses.
+- Offline motion rendering, repeatable phoneme lip sync, and reusable video poses.
 - Local vision analysis for consented screen sessions.
 - Public identity accounts and publishing adapters.
 - Full conversational feedback/evaluation dataset and model fine-tuning.

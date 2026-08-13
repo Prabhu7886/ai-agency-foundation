@@ -28,6 +28,9 @@ models:
         analysis:
           model: qwen2.5:14b
           label: Qwen 2.5 14B
+        vision:
+          model: gemma3:4b
+          label: Gemma 3 4B Vision
   specialist_default:
     primary: llama3.2:3b
     fallback:

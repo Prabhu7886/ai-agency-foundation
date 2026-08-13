@@ -165,6 +165,7 @@ class LocalModelGateway:
         prompt: str,
         *,
         json_mode: bool = False,
+        images: list[str] | None = None,
         timeout_seconds: int = 180,
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -172,6 +173,8 @@ class LocalModelGateway:
         body: dict[str, Any] = {"model": self.model, "prompt": prompt, "stream": False, "keep_alive": -1}
         if json_mode:
             body["format"] = "json"
+        if images:
+            body["images"] = images
         if options:
             body["options"] = options
         response = requests.post(
