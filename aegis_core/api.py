@@ -347,7 +347,7 @@ def create_app(
             "status": "ok",
             "local_only": True,
             "service": "aegis",
-            "version": "0.8.0",
+            "version": "0.9.0",
             "database": "sqlcipher-required",
             "prompt_compiler": "required",
         }

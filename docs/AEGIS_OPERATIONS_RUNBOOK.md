@@ -9,8 +9,8 @@ Run `tools\windows\start_aegis_stack.ps1`. It starts the Aegis loopback service 
 Verify these loopback endpoints:
 
 - Aegis: `http://127.0.0.1:8000/api/health`
-- Commerce bridge: `http://127.0.0.1:8511/v1/health`
-- Career bridge: `http://127.0.0.1:8512/v1/health`
+- Commerce bridge: authenticated `http://127.0.0.1:8511/v1/snapshot`
+- Career bridge: authenticated `http://127.0.0.1:8512/v1/snapshot`
 
 Bridge endpoints require their local bearer tokens. Use the dashboard instead of exposing those tokens in command history.
 
