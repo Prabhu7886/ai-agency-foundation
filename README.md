@@ -115,7 +115,7 @@ powershell -ExecutionPolicy Bypass -File tools\windows\start_aegis_stack.ps1
 
 The launcher reuses healthy listeners, starts missing processes hidden, and deliberately does not start Ollama. Ollama remains subject to the controlled-maintenance policy.
 
-Open `http://127.0.0.1:8000`. The workspace provides Executive Home, AI Workspace, Agent Fleet, World Pulse, Opportunity Engine, Solution Factory, Approval Center, Security Sentinel, Aegis Hub, and Data Lab. Aegis Hub contains the owner-controlled digital identity, private local voice, Aegis Academy course plans, and a visible controlled-learning ledger. Approval Center separates Security & Operations from Business & Creative decisions while preserving one single-use audit trail.
+Open `http://127.0.0.1:8000`. The workspace provides Executive Home, AI Workspace, Agent Fleet, World Pulse, Opportunity Engine, Solution Factory, Approval Center, Security Sentinel, Aegis Hub, and Data Lab. Aegis Hub contains the encrypted owner-controlled digital identity, locked portrait and full-body assets, consented browser-only screen companion, private local voice, Aegis Academy course plans, and a visible controlled-learning ledger. AI Workspace includes private incognito turns that create no conversation, task, prompt, memory, or learning record. Approval Center separates Security & Operations from Business & Creative decisions while preserving one single-use audit trail.
 
 Commerce and Career Studio remain independent applications. Start their authenticated loopback supervision bridges separately so Aegis can monitor them without owning their lifecycle:
 

@@ -12,6 +12,8 @@ The queue follows the approved order. Only one major workstream should be marked
 | 5 | AI feedback and controlled learning | COMPLETE | Explicit feedback and completed-course learning remain visible and reversible | No silent authority changes; major updates remain approval-gated |
 | 6 | Voice and avatar upgrade | COMPLETE FOR MVP | Local processing/speaking states, interruption, fallback, and raw-audio deletion | Local-only service controls and dashboard state surface |
 | 7 | Platform completion and hardening | COMPLETE FOR MVP | Search, encrypted backup approvals, restore drills, stack startup, and operations status | Production build, 53 backend tests, 23 Commerce tests, 17 Career tests, and operations runbook |
+| 8 | Digital identity control plane | COMPLETE FOR LOCAL MVP | Encrypted identity profile, locked portrait/full-body registry, consented companion sessions, and private incognito chat | 57 backend tests, TypeScript validation, production build, and digital identity contract |
+| 9 | Smart Hybrid API conversation | DEFERRED BY OWNER | Secure Platform key, $10 hard budget, public/sanitized routing, feedback ledger, and local fallback | Resume only after owner can authenticate to OpenAI Platform |
 
 ## Agent Fleet integration contract
 

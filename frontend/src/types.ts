@@ -61,6 +61,7 @@ export type ConversationMessage = {
   error?: string | null;
   created_at: string;
   streaming?: boolean;
+  ephemeral?: boolean;
 };
 export type Conversation = {
   id: string;
@@ -263,6 +264,58 @@ export type WorldPulseSchedule = {
   status: "planned" | "paused";
   last_requested_at?: string | null;
 };
+export type IdentityProfile = {
+  id: string;
+  display_name: string;
+  role_title: string;
+  pronouns: string;
+  embodiment: "always_digital";
+  conversation_style: "professional_warm" | "concise_executive" | "collaborative_deep_dive";
+  presentation_mode: "executive" | "study" | "studio" | "public_incognito";
+  traits: string[];
+  truth_standard: "strict";
+  authority_model: "owner_controlled";
+  identity_disclosure: string;
+  authority_boundary: Record<string, boolean>;
+};
+export type IdentityAsset = {
+  id: string;
+  asset_type: "portrait" | "full_body" | "voice" | "motion_rig";
+  label: string;
+  public_path?: string | null;
+  content_sha256?: string | null;
+  status: "active" | "reference" | "planned" | "disabled";
+  identity_locked: boolean;
+};
+export type CompanionSession = {
+  id: string;
+  project_id?: string | null;
+  session_type: "study" | "task" | "research" | "creative";
+  privacy_mode: "standard" | "private_incognito";
+  screen_access: "none" | "local_preview";
+  retention_policy: "notes_only" | "metadata_only";
+  purpose: string;
+  status: "active" | "completed" | "aborted";
+  summary: string;
+  started_at: string;
+  ended_at?: string | null;
+  notes: Array<{ id: string; author: "owner" | "aegis"; content: string; learning_candidate: boolean; created_at: string }>;
+};
+export type DigitalIdentity = {
+  profile: IdentityProfile;
+  assets: IdentityAsset[];
+  companion_sessions: CompanionSession[];
+  modes: Record<string, string>;
+  screen_companion: {
+    available: boolean;
+    capture_boundary: string;
+    frame_destination: string;
+    recording: boolean;
+    automatic_visual_analysis: boolean;
+    notes: string;
+  };
+  production_readiness: Record<string, string>;
+};
 export type OpportunityCycle = {
   id: string;
   name: string;
@@ -404,6 +457,7 @@ export type Bootstrap = {
   academy_courses: AcademyCourse[];
   containment_drills: ContainmentDrill[];
   learning_memory: LearningMemory[];
+  digital_identity: DigitalIdentity;
   operations: {
     backup_count: number;
     latest_backup?: string | null;

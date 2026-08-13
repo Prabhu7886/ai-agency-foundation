@@ -530,6 +530,60 @@ CREATE TABLE IF NOT EXISTS aegis_learning_memory (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS aegis_identity_profiles (
+    id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    role_title TEXT NOT NULL,
+    pronouns TEXT NOT NULL,
+    embodiment TEXT NOT NULL CHECK(embodiment = 'always_digital'),
+    conversation_style TEXT NOT NULL CHECK(conversation_style IN ('professional_warm', 'concise_executive', 'collaborative_deep_dive')),
+    presentation_mode TEXT NOT NULL CHECK(presentation_mode IN ('executive', 'study', 'studio', 'public_incognito')),
+    traits_json TEXT NOT NULL DEFAULT '[]',
+    truth_standard TEXT NOT NULL CHECK(truth_standard = 'strict'),
+    authority_model TEXT NOT NULL CHECK(authority_model = 'owner_controlled'),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aegis_identity_assets (
+    id TEXT PRIMARY KEY,
+    asset_type TEXT NOT NULL CHECK(asset_type IN ('portrait', 'full_body', 'voice', 'motion_rig')),
+    label TEXT NOT NULL,
+    public_path TEXT,
+    content_sha256 TEXT,
+    status TEXT NOT NULL CHECK(status IN ('active', 'reference', 'planned', 'disabled')),
+    identity_locked BOOLEAN NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aegis_companion_sessions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT REFERENCES aegis_projects(id) ON DELETE SET NULL,
+    session_type TEXT NOT NULL CHECK(session_type IN ('study', 'task', 'research', 'creative')),
+    privacy_mode TEXT NOT NULL CHECK(privacy_mode IN ('standard', 'private_incognito')),
+    screen_access TEXT NOT NULL CHECK(screen_access IN ('none', 'local_preview')),
+    retention_policy TEXT NOT NULL CHECK(retention_policy IN ('notes_only', 'metadata_only')),
+    purpose TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL CHECK(status IN ('active', 'completed', 'aborted')),
+    summary TEXT NOT NULL DEFAULT '',
+    started_at TEXT NOT NULL,
+    ended_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_companion_sessions_time
+ON aegis_companion_sessions(started_at DESC);
+
+CREATE TABLE IF NOT EXISTS aegis_companion_notes (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES aegis_companion_sessions(id) ON DELETE CASCADE,
+    author TEXT NOT NULL CHECK(author IN ('owner', 'aegis')),
+    content TEXT NOT NULL,
+    learning_candidate BOOLEAN NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_companion_notes_session
+ON aegis_companion_notes(session_id, created_at);
+
 CREATE TABLE IF NOT EXISTS aegis_activity (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_type TEXT NOT NULL,
@@ -661,6 +715,10 @@ class DatabaseSetup:
             "aegis_academy_assessments",
             "aegis_containment_drills",
             "aegis_learning_memory",
+            "aegis_identity_profiles",
+            "aegis_identity_assets",
+            "aegis_companion_sessions",
+            "aegis_companion_notes",
         }
         missing = required - tables
         if missing:

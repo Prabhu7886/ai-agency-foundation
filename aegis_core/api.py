@@ -25,6 +25,7 @@ from aegis_core.agent_fleet import AgentFleetService
 from aegis_core.academy import AcademyService
 from aegis_core.codex_adapter import CodexAppServerAdapter
 from aegis_core.data_lab import DataLabService
+from aegis_core.digital_identity import DigitalIdentityService
 from aegis_core.github_adapter import GitHubAdapter
 from aegis_core.model_gateway import LocalModelGateway
 from aegis_core.model_router import LocalModelRouter
@@ -44,10 +45,14 @@ from aegis_core.schemas import (
     AgentLearningUpdateCreate,
     ApprovalDecision,
     ChatRequest,
+    CompanionNoteCreate,
+    CompanionSessionComplete,
+    CompanionSessionCreate,
     CodexTaskRequest,
     ConversationCreate,
     DataJobRequest,
     GitHubOperationRequest,
+    IdentityProfileUpdate,
     LearningMemoryCreate,
     LearningMemoryDecision,
     PluginChange,
@@ -131,6 +136,7 @@ def create_app(
     voice = LocalVoiceService()
     agent_fleet = AgentFleetService(store)
     academy = AcademyService(store)
+    identity = DigitalIdentityService(store)
     opportunity_engine = OpportunityEngineService(store)
     operations = OperationsService()
     session_token = secrets.token_urlsafe(32)
@@ -227,7 +233,7 @@ def create_app(
 
     app = FastAPI(
         title="Aegis Local Executive API",
-        version="0.9.0",
+        version="0.10.0",
         description="Local-first executive control plane built on the AI Agency security foundation.",
         lifespan=lifespan,
         docs_url="/api/docs" if os.getenv("AEGIS_ENABLE_API_DOCS", "false").lower() == "true" else None,
@@ -275,7 +281,7 @@ def create_app(
         codex_plugin = plugins.get("plugin-codex", {})
         local_status = await asyncio.to_thread(model_router.status)
         return {
-            "version": "0.9.0",
+            "version": "0.10.0",
             "workspaces": [item["label"] for item in WORKSPACES],
             "overview": store.overview(),
             "agents": [
@@ -286,6 +292,15 @@ def create_app(
                 {"name": item["name"], "version": item["version"], "status": item["status"]}
                 for item in store.list_skills()
             ],
+            "digital_identity": identity.model_context(),
+            "confirmed_owner_preferences": [
+                {
+                    "category": item["category"],
+                    "statement": item["statement"],
+                }
+                for item in store.list_learning_memory()
+                if item["status"] == "confirmed" and not item["affects_authority"]
+            ][:20],
             "controls": {
                 "prompt_compilation_required": True,
                 "approval_execution_single_use": True,
@@ -308,6 +323,7 @@ def create_app(
                 "Encrypted SQLCipher control-plane persistence",
                 "Audited project, agent, skill, and workspace inventory",
                 "Owner-controlled Aegis Hub with local voice, Academy plans, and reviewable learning memory",
+                "Encrypted digital identity profile, versioned avatar assets, and consented companion sessions",
                 "Dual approval queues backed by one single-use encrypted execution ledger",
                 "World Pulse niche filtering with an internal source brief reader",
                 "Opportunity-to-Solution handoff with approval-gated evidence stages",
@@ -347,7 +363,7 @@ def create_app(
             "status": "ok",
             "local_only": True,
             "service": "aegis",
-            "version": "0.9.0",
+            "version": "0.10.0",
             "database": "sqlcipher-required",
             "prompt_compiler": "required",
         }
@@ -405,6 +421,7 @@ def create_app(
             "academy_courses": store.list_academy_courses(),
             "containment_drills": store.list_containment_drills(),
             "learning_memory": store.list_learning_memory(),
+            "digital_identity": identity.status(),
             "operations": operations.status(),
             "voice": voice.status(),
             "activity": store.list_activity(),
@@ -763,18 +780,21 @@ def create_app(
         project = store.get_project(payload.project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-        conversation_item = store.get_conversation(payload.conversation_id) if payload.conversation_id else None
+        private_incognito = payload.privacy_mode == "private_incognito"
+        if private_incognito and payload.conversation_id:
+            raise HTTPException(status_code=409, detail="Private incognito cannot attach to a saved conversation")
+        conversation_item = store.get_conversation(payload.conversation_id) if payload.conversation_id and not private_incognito else None
         if payload.conversation_id and not conversation_item:
             raise HTTPException(status_code=404, detail="Conversation not found")
         if conversation_item and conversation_item["project_id"] != payload.project_id:
             raise HTTPException(status_code=404, detail="Conversation not found for this project")
         if conversation_item and conversation_item["status"] != "active":
             raise HTTPException(status_code=409, detail="Archived conversations are read-only")
-        if not conversation_item:
+        if not conversation_item and not private_incognito:
             conversation_item = store.create_conversation(payload.project_id)
 
-        history = store.conversation_context(conversation_item["id"], limit=12, max_characters=60_000)
-        task = store.create_task(
+        history = [] if private_incognito else store.conversation_context(conversation_item["id"], limit=12, max_characters=60_000)
+        task = None if private_incognito else store.create_task(
             payload.project_id,
             payload.message[:120],
             payload.message,
@@ -782,14 +802,23 @@ def create_app(
             "Internal Engineering" if any(word in payload.message.lower() for word in ("code", "build", "test", "github")) else "Aegis",
             "running",
         )
-        user_message = store.add_conversation_message(
+        user_message = {
+            "id": f"incognito-user-{secrets.token_hex(8)}",
+            "conversation_id": "private-incognito",
+            "role": "user",
+            "content": payload.message,
+            "provider": "owner",
+            "token_count": 0,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        } if private_incognito else store.add_conversation_message(
             conversation_item["id"],
             "user",
             payload.message,
             task_id=task["id"],
             provider="owner",
         )
-        conversation_item = store.get_conversation(conversation_item["id"], message_limit=0) or conversation_item
+        if conversation_item:
+            conversation_item = store.get_conversation(conversation_item["id"], message_limit=0) or conversation_item
 
         def encode_event(event: dict[str, Any]) -> str:
             return json.dumps(event, ensure_ascii=False, default=str) + "\n"
@@ -809,7 +838,7 @@ def create_app(
                         "conversation": conversation_item,
                         "user_message": user_message,
                         "task": task,
-                        "status": "Selecting the best approved local model",
+                        "status": "Private incognito · selecting local model" if private_incognito else "Selecting the best approved local model",
                     }
                 )
                 async with model_turn_lock:
@@ -833,7 +862,8 @@ def create_app(
                     yield encode_event({"type": "status", "status": "Rewriting your request into a bounded execution contract"})
                     compilation = await asyncio.to_thread(selected_compiler.compile, payload.message, project_context)
                     compilation["model_routing"] = route
-                    store.save_prompt_compilation(task["id"], compilation)
+                    if task:
+                        store.save_prompt_compilation(task["id"], compilation)
                     yield encode_event({"type": "compilation", "compilation": compilation})
                     yield encode_event({"type": "status", "status": f"Thinking with {route['label']}"})
                     runtime_context = await runtime_snapshot(project)
@@ -846,6 +876,12 @@ def create_app(
                             "risk_level": compilation["risk_level"],
                         },
                         "model_routing": route,
+                        "privacy": {
+                            "mode": payload.privacy_mode,
+                            "persistence": "none" if private_incognito else "sqlcipher",
+                            "cloud_allowed": False,
+                            "learning_allowed": not private_incognito,
+                        },
                     }
                     generation_started = perf_counter()
                     async for model_event in iterate_in_threadpool(
@@ -863,7 +899,18 @@ def create_app(
                 answer = "".join(answer_parts).strip()
                 if not answer:
                     raise RuntimeError("Ollama returned an empty streamed response")
-                assistant_message = store.add_conversation_message(
+                assistant_message = {
+                    "id": f"incognito-assistant-{secrets.token_hex(8)}",
+                    "conversation_id": "private-incognito",
+                    "role": "assistant",
+                    "content": answer,
+                    "provider": "ollama-local",
+                    "model": str(route["model"]),
+                    "token_count": token_count,
+                    "compilation": compilation,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "ephemeral": True,
+                } if private_incognito else store.add_conversation_message(
                     conversation_item["id"],
                     "assistant",
                     answer,
@@ -873,11 +920,11 @@ def create_app(
                     token_count=token_count,
                     compilation=compilation,
                 )
-                completed_task = store.update_task(task["id"], "completed", answer[:10_000])
+                completed_task = None if private_incognito else store.update_task(task["id"], "completed", answer[:10_000])
                 yield encode_event(
                     {
                         "type": "done",
-                        "conversation": store.get_conversation(conversation_item["id"], message_limit=0),
+                        "conversation": None if private_incognito else store.get_conversation(conversation_item["id"], message_limit=0),
                         "assistant_message": assistant_message,
                         "task": completed_task,
                         "provider": "ollama-local",
@@ -892,16 +939,29 @@ def create_app(
                     }
                 )
             except asyncio.CancelledError:
-                try:
-                    store.update_task(task["id"], "failed", "Client disconnected during local token stream")
-                except Exception:
-                    pass
+                if task:
+                    try:
+                        store.update_task(task["id"], "failed", "Client disconnected during local token stream")
+                    except Exception:
+                        pass
                 raise
             except Exception as exc:
                 message = f"Local model unavailable: {str(exc)[:500]}"
                 partial = "".join(answer_parts).strip()
                 safe_answer = partial or "Aegis could not reach the approved local model. No cloud fallback was used."
-                assistant_message = store.add_conversation_message(
+                assistant_message = {
+                    "id": f"incognito-assistant-{secrets.token_hex(8)}",
+                    "conversation_id": "private-incognito",
+                    "role": "assistant",
+                    "content": safe_answer,
+                    "provider": "none",
+                    "model": str(route["model"]) if route else model_gateway.model,
+                    "token_count": token_count,
+                    "compilation": compilation,
+                    "error": message,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "ephemeral": True,
+                } if private_incognito else store.add_conversation_message(
                     conversation_item["id"],
                     "assistant",
                     safe_answer,
@@ -912,10 +972,12 @@ def create_app(
                     compilation=compilation,
                     error=message,
                 )
-                try:
-                    failed_task = store.update_task(task["id"], "failed", message)
-                except Exception:
-                    failed_task = store.get_task(task["id"])
+                failed_task = None
+                if task:
+                    try:
+                        failed_task = store.update_task(task["id"], "failed", message)
+                    except Exception:
+                        failed_task = store.get_task(task["id"])
                 yield encode_event(
                     {
                         "type": "error",
@@ -933,6 +995,8 @@ def create_app(
 
     @app.post("/api/chat", dependencies=[Depends(require_session)])
     async def chat(payload: ChatRequest) -> dict[str, Any]:
+        if payload.privacy_mode == "private_incognito":
+            raise HTTPException(status_code=409, detail="Private incognito is available only through the ephemeral stream")
         project = store.get_project(payload.project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
@@ -1379,6 +1443,42 @@ def create_app(
             return store.set_opportunity_cycle_status(cycle_id, payload.status)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/identity", dependencies=[Depends(require_session)])
+    async def get_identity() -> dict[str, Any]:
+        return identity.status()
+
+    @app.patch("/api/identity", dependencies=[Depends(require_session)])
+    async def update_identity(payload: IdentityProfileUpdate) -> dict[str, Any]:
+        store.update_identity_profile(payload.model_dump())
+        return identity.status()
+
+    @app.post("/api/identity/companion-sessions", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_session)])
+    async def start_companion_session(payload: CompanionSessionCreate) -> dict[str, Any]:
+        try:
+            return store.start_companion_session(payload.model_dump())
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/identity/companion-sessions/{session_id}/notes", dependencies=[Depends(require_session)])
+    async def add_companion_note(session_id: str, payload: CompanionNoteCreate) -> dict[str, Any]:
+        try:
+            return store.add_companion_note(session_id, payload.model_dump())
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/identity/companion-sessions/{session_id}/complete", dependencies=[Depends(require_session)])
+    async def finish_companion_session(session_id: str, payload: CompanionSessionComplete) -> dict[str, Any]:
+        try:
+            return store.finish_companion_session(session_id, payload.status, payload.summary)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/opportunity-cycles/{cycle_id}/run", dependencies=[Depends(require_session)])
     async def run_opportunity_cycle(cycle_id: str) -> dict[str, Any]:

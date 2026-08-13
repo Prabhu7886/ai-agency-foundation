@@ -97,13 +97,14 @@ export async function streamChat(
   projectId: string,
   message: string,
   conversationId: string | null,
+  privacyMode: "standard" | "private_incognito",
   onEvent: (event: ChatStreamEvent) => void,
 ): Promise<void> {
   const response = await fetch("/api/chat/stream", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ project_id: projectId, message, conversation_id: conversationId }),
+    body: JSON.stringify({ project_id: projectId, message, conversation_id: conversationId, privacy_mode: privacyMode }),
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
@@ -276,6 +277,25 @@ export function createLearningMemory(payload: Record<string, unknown>): Promise<
 
 export function decideLearningMemory(memoryId: string, status: "confirmed" | "disabled"): Promise<Record<string, unknown>> {
   return request(`/api/learning/memory/${memoryId}`, { method: "PATCH", body: JSON.stringify({ status }) });
+}
+
+export function updateIdentity(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return request("/api/identity", { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export function startCompanionSession(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return request("/api/identity/companion-sessions", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function addCompanionNote(sessionId: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return request(`/api/identity/companion-sessions/${sessionId}/notes`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function finishCompanionSession(sessionId: string, status: "completed" | "aborted", summary = ""): Promise<Record<string, unknown>> {
+  return request(`/api/identity/companion-sessions/${sessionId}/complete`, {
+    method: "POST",
+    body: JSON.stringify({ status, summary }),
+  });
 }
 
 export function transcribeVoice(blob: Blob): Promise<{ text: string; engine: string }> {

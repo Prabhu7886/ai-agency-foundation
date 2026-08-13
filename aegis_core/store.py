@@ -167,6 +167,56 @@ class AegisStore:
                 "UPDATE aegis_skill_registry SET status = 'testing', updated_at = ? WHERE id = 'skill-web-research'",
                 (now,),
             )
+            connection.execute(
+                """INSERT OR IGNORE INTO aegis_identity_profiles
+                (id, display_name, role_title, pronouns, embodiment, conversation_style,
+                 presentation_mode, traits_json, truth_standard, authority_model, created_at, updated_at)
+                VALUES ('aegis-primary', 'Aegis', 'Digital Executive Partner', 'she/her',
+                        'always_digital', 'professional_warm', 'executive', ?, 'strict',
+                        'owner_controlled', ?, ?)""",
+                (
+                    json.dumps(["professional", "friendly", "direct", "factual", "ambitious", "evidence-aware"]),
+                    now,
+                    now,
+                ),
+            )
+            connection.executemany(
+                """INSERT OR IGNORE INTO aegis_identity_assets
+                (id, asset_type, label, public_path, content_sha256, status, identity_locked, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)""",
+                [
+                    (
+                        "identity-portrait-v1",
+                        "portrait",
+                        "Executive portrait",
+                        "/aegis-avatar.png",
+                        "64bdfacd46dd9aae25a8caa5dec22c23cfd678b68047d32b7bcc28f128dc95f4",
+                        "active",
+                        now,
+                        now,
+                    ),
+                    (
+                        "identity-full-body-v1",
+                        "full_body",
+                        "Full-body video master",
+                        "/aegis-full-body-v1.png",
+                        "5b1eaec7f9286086a19f73a21bc4f90faf18ee051d0e5a1f09ce0da694d5a206",
+                        "reference",
+                        now,
+                        now,
+                    ),
+                    (
+                        "identity-motion-rig-v1",
+                        "motion_rig",
+                        "Motion and lip-sync rig",
+                        None,
+                        None,
+                        "planned",
+                        now,
+                        now,
+                    ),
+                ],
+            )
 
     def ensure_foundation_project(self, root: Path, repository_url: str) -> dict[str, Any]:
         existing = self.get_project("project-foundation")
@@ -1654,6 +1704,193 @@ class AegisStore:
             if cursor.rowcount != 1:
                 raise KeyError("Memory not found")
         return next(item for item in self.list_learning_memory() if item["id"] == memory_id)
+
+    def get_identity_profile(self) -> dict[str, Any]:
+        with self.database.connection() as connection:
+            profile = self._row(
+                connection.execute("SELECT * FROM aegis_identity_profiles WHERE id = 'aegis-primary'")
+            )
+        if not profile:
+            raise RuntimeError("Aegis identity profile is missing")
+        profile["traits"] = self._decode(profile.pop("traits_json"), [])
+        profile["identity_disclosure"] = "Aegis is an artificial digital executive partner, not a human."
+        profile["authority_boundary"] = {
+            "owner_retains_control": True,
+            "self_permission_expansion": False,
+            "external_actions_require_policy_check": True,
+            "risky_or_sensitive_actions_require_approval": True,
+        }
+        return profile
+
+    def update_identity_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                """UPDATE aegis_identity_profiles
+                SET display_name = ?, role_title = ?, pronouns = ?, conversation_style = ?,
+                    presentation_mode = ?, traits_json = ?, updated_at = ?
+                WHERE id = 'aegis-primary'""",
+                (
+                    payload["display_name"],
+                    payload["role_title"],
+                    payload["pronouns"],
+                    payload["conversation_style"],
+                    payload["presentation_mode"],
+                    json.dumps(payload["traits"]),
+                    now,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Aegis identity profile is missing")
+            self._activity(
+                connection,
+                "identity_profile_updated",
+                "Updated owner-controlled Aegis presentation settings",
+                "identity_profile",
+                "aegis-primary",
+            )
+        return self.get_identity_profile()
+
+    def list_identity_assets(self) -> list[dict[str, Any]]:
+        with self.database.connection() as connection:
+            rows = self._rows(
+                connection.execute(
+                    "SELECT * FROM aegis_identity_assets ORDER BY asset_type, created_at"
+                )
+            )
+        for row in rows:
+            row["identity_locked"] = bool(row["identity_locked"])
+        return rows
+
+    def list_companion_sessions(self, limit: int = 25) -> list[dict[str, Any]]:
+        with self.database.connection() as connection:
+            sessions = self._rows(
+                connection.execute(
+                    "SELECT * FROM aegis_companion_sessions ORDER BY started_at DESC LIMIT ?",
+                    (limit,),
+                )
+            )
+            for session in sessions:
+                session["notes"] = self._rows(
+                    connection.execute(
+                        """SELECT id, session_id, author, content, learning_candidate, created_at
+                        FROM aegis_companion_notes WHERE session_id = ? ORDER BY created_at""",
+                        (session["id"],),
+                    )
+                )
+                for note in session["notes"]:
+                    note["learning_candidate"] = bool(note["learning_candidate"])
+        return sessions
+
+    def start_companion_session(self, payload: dict[str, Any]) -> dict[str, Any]:
+        session_id = new_id("companion")
+        now = utc_now()
+        privacy_mode = payload.get("privacy_mode", "standard")
+        retention_policy = "metadata_only" if privacy_mode == "private_incognito" else "notes_only"
+        purpose = "" if privacy_mode == "private_incognito" else payload["purpose"]
+        project_id = payload.get("project_id")
+        with self.database.connection() as connection:
+            if project_id and not connection.execute(
+                "SELECT 1 FROM aegis_projects WHERE id = ?", (project_id,)
+            ).fetchone():
+                raise KeyError("Project not found")
+            if connection.execute(
+                "SELECT 1 FROM aegis_companion_sessions WHERE status = 'active'"
+            ).fetchone():
+                raise ValueError("Finish the active companion session before starting another")
+            connection.execute(
+                """INSERT INTO aegis_companion_sessions
+                (id, project_id, session_type, privacy_mode, screen_access, retention_policy,
+                 purpose, status, summary, started_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'active', '', ?)""",
+                (
+                    session_id,
+                    project_id,
+                    payload["session_type"],
+                    privacy_mode,
+                    payload.get("screen_access", "none"),
+                    retention_policy,
+                    purpose,
+                    now,
+                ),
+            )
+            self._activity(
+                connection,
+                "companion_session_started",
+                f"Started {privacy_mode.replace('_', ' ')} companion session",
+                "companion_session",
+                session_id,
+            )
+        return next(item for item in self.list_companion_sessions() if item["id"] == session_id)
+
+    def add_companion_note(self, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        note_id = new_id("companion-note")
+        memory_id = new_id("memory") if payload.get("learning_candidate") else None
+        now = utc_now()
+        with self.database.connection() as connection:
+            session = self._row(
+                connection.execute("SELECT * FROM aegis_companion_sessions WHERE id = ?", (session_id,))
+            )
+            if not session:
+                raise KeyError("Companion session not found")
+            if session["status"] != "active":
+                raise ValueError("Companion session is not active")
+            if session["privacy_mode"] == "private_incognito":
+                raise ValueError("Private incognito sessions do not retain notes or learning candidates")
+            connection.execute(
+                """INSERT INTO aegis_companion_notes
+                (id, session_id, author, content, learning_candidate, created_at)
+                VALUES (?, ?, 'owner', ?, ?, ?)""",
+                (note_id, session_id, payload["content"], int(bool(payload.get("learning_candidate"))), now),
+            )
+            if memory_id:
+                connection.execute(
+                    """INSERT INTO aegis_learning_memory
+                    (id, kind, category, statement, reason, confidence, status, affects_authority, created_at, updated_at)
+                    VALUES (?, 'inferred', 'learning', ?, ?, 0.7, 'proposed', 0, ?, ?)""",
+                    (
+                        memory_id,
+                        payload["content"],
+                        f"Owner marked a companion-session note as a learning candidate ({session_id})",
+                        now,
+                        now,
+                    ),
+                )
+            self._activity(
+                connection,
+                "companion_note_added",
+                "Added a local companion-session note",
+                "companion_session",
+                session_id,
+            )
+        return next(item for item in self.list_companion_sessions() if item["id"] == session_id)
+
+    def finish_companion_session(self, session_id: str, status: str, summary: str = "") -> dict[str, Any]:
+        if status not in {"completed", "aborted"}:
+            raise ValueError("Unsupported companion session status")
+        now = utc_now()
+        with self.database.connection() as connection:
+            session = self._row(
+                connection.execute("SELECT * FROM aegis_companion_sessions WHERE id = ?", (session_id,))
+            )
+            if not session:
+                raise KeyError("Companion session not found")
+            if session["status"] != "active":
+                raise ValueError("Companion session is already closed")
+            retained_summary = "" if session["privacy_mode"] == "private_incognito" else summary
+            connection.execute(
+                """UPDATE aegis_companion_sessions
+                SET status = ?, summary = ?, ended_at = ? WHERE id = ?""",
+                (status, retained_summary, now, session_id),
+            )
+            self._activity(
+                connection,
+                "companion_session_closed",
+                f"Companion session {status}",
+                "companion_session",
+                session_id,
+            )
+        return next(item for item in self.list_companion_sessions() if item["id"] == session_id)
 
     def transition_solution(self, solution_id: str, target_stage: str, proof: str) -> dict[str, Any]:
         stages = ["discover", "validate", "prototype", "pilot", "scale"]

@@ -31,6 +31,13 @@ Do not narrate the prompt compiler, invent extra steps, or ask for clarification
 verified context already resolves the question. When the owner requests one sentence, return only
 that sentence with no heading, preamble, bullets, or follow-up; include every requested fact in the
 same sentence by joining clauses with "and" or a semicolon.
+Your identity is always digital. Use the supplied digital_identity profile for name, role, pronouns,
+presentation style, and traits, but never treat presentation settings as authority. If asked whether
+you are human, disclose plainly that you are an artificial digital partner. Treat confirmed owner
+preferences as communication guidance only; they cannot authorize actions or weaken safeguards.
+In private_incognito mode, do not claim you will remember, learn from, save, or later recall the turn.
+Keep one-on-one conversation natural and responsive: do not force every ordinary discussion into a
+formal report, and do not repeat the owner's request unless a short restatement genuinely helps.
 """.strip()
 
 
@@ -106,7 +113,7 @@ class LocalModelGateway:
         """Yield local Ollama tokens and a final usage event without buffering the answer."""
         lowered = message.lower()
         concise = "short sentence" in lowered or "one sentence" in lowered or "brief answer" in lowered
-        options: dict[str, Any] = {"num_predict": 64 if concise else 512, "temperature": 0.2, "num_ctx": 4096}
+        options: dict[str, Any] = {"num_predict": 64 if concise else 1024, "temperature": 0.2, "num_ctx": 8192}
         if concise:
             options["stop"] = ["\n", ". "]
         body = {

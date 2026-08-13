@@ -53,6 +53,7 @@ import {
   createAcademyCourse,
   addAcademyMaterial,
   addAcademyAssessment,
+  addCompanionNote,
   createLearningMemory,
   createOpportunity,
   createOpportunityCycle,
@@ -85,6 +86,7 @@ import {
   requestFleetLearningRollback,
   requestSolutionTransition,
   restoreConversation,
+  finishCompanionSession,
   runSecurityScan,
   pollAgentFleet,
   runContainmentDrill,
@@ -101,8 +103,10 @@ import {
   requestRestoreDrill,
   executeRestoreDrill,
   searchWorkspace,
+  startCompanionSession,
   streamChat,
   transcribeVoice,
+  updateIdentity,
 } from "./api";
 import type { Agent, AgentIncident, Approval, Bootstrap, CodexStatus, Conversation, ConversationMessage, GitHubAction, GitHubGovernance, GitHubStatus, IndependentAgent, Plugin, Project, SecurityScan, Skill, Workspace, WorldPulseItem } from "./types";
 
@@ -391,7 +395,20 @@ export default function App() {
             <ApprovalCenter approvals={data.approvals} onDecision={decideAndExecute} />
           )}
           {activeWorkspace === "security-sentinel" && <SecuritySentinel data={data} project={selectedProject} onBackup={() => mutate(() => requestEncryptedBackup(), "Encrypted backup sent to Security & Operations approvals")} onRestore={() => mutate(() => requestRestoreDrill(), "Restore drill sent to Security & Operations approvals")} />}
-          {activeWorkspace === "aegis-hub" && <AegisHub data={data} onCreateCourse={(payload) => mutate(() => createAcademyCourse(payload), "Course added to Aegis Academy")} onUpdateCourse={(id, status, progress) => mutate(() => updateAcademyCourse(id, status, progress), "Learning progress updated")} onAddMaterial={(id, payload) => mutate(() => addAcademyMaterial(id, payload), "Verified learning material added")} onAddAssessment={(id, payload) => mutate(() => addAcademyAssessment(id, payload), "Academy assessment recorded")} onCreateMemory={(payload) => mutate(() => createLearningMemory(payload), "Preference saved under controlled learning")} onMemoryDecision={(id, status) => mutate(() => decideLearningMemory(id, status), "Learning preference updated")} />}
+          {activeWorkspace === "aegis-hub" && <AegisHub
+            data={data}
+            project={selectedProject}
+            onCreateCourse={(payload) => mutate(() => createAcademyCourse(payload), "Course added to Aegis Academy")}
+            onUpdateCourse={(id, status, progress) => mutate(() => updateAcademyCourse(id, status, progress), "Learning progress updated")}
+            onAddMaterial={(id, payload) => mutate(() => addAcademyMaterial(id, payload), "Verified learning material added")}
+            onAddAssessment={(id, payload) => mutate(() => addAcademyAssessment(id, payload), "Academy assessment recorded")}
+            onCreateMemory={(payload) => mutate(() => createLearningMemory(payload), "Preference saved under controlled learning")}
+            onMemoryDecision={(id, status) => mutate(() => decideLearningMemory(id, status), "Learning preference updated")}
+            onUpdateIdentity={(payload) => mutate(() => updateIdentity(payload), "Aegis identity presentation updated")}
+            onStartSession={(payload) => mutate(() => startCompanionSession(payload), "Companion session started")}
+            onAddSessionNote={(id, payload) => mutate(() => addCompanionNote(id, payload), "Session note saved locally")}
+            onFinishSession={(id, status, summary) => mutate(() => finishCompanionSession(id, status, summary), `Companion session ${status}`)}
+          />}
           {activeWorkspace === "data-lab" && <DataLab project={selectedProject} onRequest={(payload) => mutate(() => requestDataJob(payload), "Data cleaning plan sent to Approval Center")} />}
         </section>
       </main>
@@ -452,6 +469,7 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
   const [streamStatus, setStreamStatus] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [privateIncognito, setPrivateIncognito] = useState(false);
   const conversationEnd = useRef<HTMLDivElement | null>(null);
   const skipNextConversationLoad = useRef(false);
   const allProjectConversations = useMemo(
@@ -471,6 +489,7 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
   }, [project?.id]);
 
   useEffect(() => {
+    if (privateIncognito) return;
     if (!selectedConversationId) {
       setMessages([]);
       return;
@@ -486,7 +505,7 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
       .catch((reason) => { if (!cancelled) setStreamStatus(reason instanceof Error ? reason.message : "Conversation failed to load"); })
       .finally(() => { if (!cancelled) setLoadingConversation(false); });
     return () => { cancelled = true; };
-  }, [selectedConversationId]);
+  }, [selectedConversationId, privateIncognito]);
 
   useEffect(() => {
     conversationEnd.current?.scrollIntoView({ behavior: sending ? "auto" : "smooth", block: "end" });
@@ -501,6 +520,16 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
     setStreamStatus("");
   };
 
+  const toggleIncognito = () => {
+    if (sending) return;
+    setPrivateIncognito((current) => !current);
+    setSelectedConversationId(null);
+    setMessages([]);
+    setMessage("");
+    setStreamStatus("");
+    setShowArchived(false);
+  };
+
   const sendMessage = async (request: string) => {
     if (!project || sending) return;
     setSending(true);
@@ -508,7 +537,7 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
     const now = new Date().toISOString();
     const optimisticUserId = `pending-user-${crypto.randomUUID()}`;
     const optimisticAssistantId = `pending-assistant-${crypto.randomUUID()}`;
-    let resolvedConversationId = selectedConversationId;
+    let resolvedConversationId = privateIncognito ? null : selectedConversationId;
     setMessages((current) => [...current, {
       id: optimisticUserId,
       conversation_id: selectedConversationId ?? "pending",
@@ -517,6 +546,7 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
       provider: "owner",
       token_count: 0,
       created_at: now,
+      ephemeral: privateIncognito,
     }, {
       id: optimisticAssistantId,
       conversation_id: selectedConversationId ?? "pending",
@@ -526,9 +556,10 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
       token_count: 0,
       created_at: now,
       streaming: true,
+      ephemeral: privateIncognito,
     }]);
     try {
-      await streamChat(project.id, request, selectedConversationId, (event) => {
+      await streamChat(project.id, request, privateIncognito ? null : selectedConversationId, privateIncognito ? "private_incognito" : "standard", (event) => {
         if (event.type === "start") {
           if (event.conversation) {
             resolvedConversationId = event.conversation.id;
@@ -560,8 +591,8 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
               : "");
         }
       });
-      await onRefresh();
-      if (resolvedConversationId) {
+      if (!privateIncognito) await onRefresh();
+      if (!privateIncognito && resolvedConversationId) {
         const saved = await getConversation(resolvedConversationId);
         setMessages(saved.messages ?? []);
       }
@@ -636,16 +667,16 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
   return <div className="ai-workspace ai-workspace--threads">
     <aside className="ai-thread-sidebar"><header><div>{showArchived ? <Archive size={15} /> : <MessageSquareText size={15} />}<strong>{showArchived ? "Archived" : "Conversations"}</strong></div><button title="New encrypted chat" onClick={newChat}><Plus size={15} /></button></header><div className="ai-thread-list">{displayedConversations.length === 0 ? <p>{showArchived ? "No archived conversations." : "No saved conversations yet."}</p> : displayedConversations.map((item) => <button className={`${item.id === selectedConversationId ? "active" : ""} ${item.status === "archived" ? "archived" : ""}`} key={item.id} onClick={() => setSelectedConversationId(item.id)}><strong>{item.title}</strong><span>{item.message_count} messages · {timeAgo(item.updated_at)}</span><small>{item.preview || "Encrypted local conversation"}</small></button>)}</div><footer><div><LockKeyhole size={12} /> SQLCipher encrypted</div><button className={showArchived ? "active" : ""} onClick={() => { const nextMode = !showArchived; const nextItems = nextMode ? archivedConversations : projectConversations; setShowArchived(nextMode); setSelectedConversationId(nextItems[0]?.id ?? null); setMessages([]); }}><Archive size={11} /> {archivedConversations.length}</button></footer></aside>
     <div className="ai-chat-main">
-      <header className="ai-workspace__header"><div><div className="eyebrow"><BrainCircuit size={13} /> AEGIS CONVERSATION</div><h2>{currentConversation?.title ?? project?.name ?? "AI Workspace"}</h2><p>Streaming local reasoning with bounded encrypted history.</p></div><div className="ai-chat-controls"><StatusPill tone="safe">Auto-route · Llama / DeepSeek / Qwen</StatusPill>{currentConversation?.status === "archived" ? <><button className="chat-utility" onClick={() => void restoreCurrent()}><ArchiveRestore size={14} /> Restore</button><button className="chat-utility chat-utility--danger" onClick={() => void deleteCurrent()}><Trash2 size={14} /> Delete</button></> : selectedConversationId ? <button className="chat-utility" disabled={sending} onClick={() => void archiveCurrent()}><Archive size={14} /> Archive</button> : null}<button className="chat-utility" disabled={sending} onClick={newChat}><Plus size={14} /> New chat</button></div></header>
+      <header className="ai-workspace__header"><div><div className="eyebrow"><BrainCircuit size={13} /> AEGIS CONVERSATION</div><h2>{privateIncognito ? "Private incognito" : currentConversation?.title ?? project?.name ?? "AI Workspace"}</h2><p>{privateIncognito ? "Local-only ephemeral conversation. Nothing from this turn is saved or learned." : "Streaming local reasoning with bounded encrypted history."}</p></div><div className="ai-chat-controls"><StatusPill tone={privateIncognito ? "warning" : "safe"}>{privateIncognito ? "No history · No learning · No cloud" : "Auto-route · Llama / DeepSeek / Qwen"}</StatusPill><button className={`chat-utility ${privateIncognito ? "active" : ""}`} disabled={sending} onClick={toggleIncognito}><LockKeyhole size={14} /> {privateIncognito ? "Exit incognito" : "Incognito"}</button>{!privateIncognito && (currentConversation?.status === "archived" ? <><button className="chat-utility" onClick={() => void restoreCurrent()}><ArchiveRestore size={14} /> Restore</button><button className="chat-utility chat-utility--danger" onClick={() => void deleteCurrent()}><Trash2 size={14} /> Delete</button></> : selectedConversationId ? <button className="chat-utility" disabled={sending} onClick={() => void archiveCurrent()}><Archive size={14} /> Archive</button> : null)}{!privateIncognito && <button className="chat-utility" disabled={sending} onClick={newChat}><Plus size={14} /> New chat</button>}</div></header>
       <section className="ai-conversation">
-        {loadingConversation ? <div className="ai-message ai-message--aegis ai-message--thinking"><div className="ai-avatar ai-avatar--aegis"><BrainCircuit size={14} /></div><div><span>Aegis</span><div className="ai-thinking"><i /><i /><i /> Decrypting local conversation…</div></div></div> : messages.length === 0 ? <div className="ai-welcome"><div className="ai-welcome__mark"><BrainCircuit size={30} /></div><h3>What are we building?</h3><p>Discuss an idea, analyze a market, make a plan, or prepare a coding task. Every turn is rewritten into a bounded execution contract, routed to the best local specialist, and saved only in the encrypted local database.</p><div className="model-route-grid"><span>Llama<small>General</small></span><span>DeepSeek<small>Coding</small></span><span>Qwen<small>Research · analysis</small></span></div><div className="ai-starters">{["Turn my idea into a practical plan", "Analyze a business opportunity", "Help me design a secure feature"].map((starter) => <button key={starter} onClick={() => setMessage(starter)}>{starter}<ChevronRight size={13} /></button>)}</div></div> : messages.map((item) => <article className="ai-turn" key={item.id}>
+        {loadingConversation ? <div className="ai-message ai-message--aegis ai-message--thinking"><div className="ai-avatar ai-avatar--aegis"><BrainCircuit size={14} /></div><div><span>Aegis</span><div className="ai-thinking"><i /><i /><i /> Decrypting local conversation…</div></div></div> : messages.length === 0 ? <div className="ai-welcome"><div className="ai-welcome__mark"><BrainCircuit size={30} /></div><h3>{privateIncognito ? "A private room with Aegis" : "What are we building?"}</h3><p>{privateIncognito ? "This session stays local and ephemeral. It creates no conversation, task, memory, or learning record; only the text visible on this screen exists until you leave." : "Discuss an idea, analyze a market, make a plan, or prepare a coding task. Every turn is rewritten into a bounded execution contract, routed to the best local specialist, and saved only in the encrypted local database."}</p><div className="model-route-grid"><span>Llama<small>General</small></span><span>DeepSeek<small>Coding</small></span><span>Qwen<small>Research · analysis</small></span></div><div className="ai-starters">{["Turn my idea into a practical plan", "Analyze a business opportunity", "Help me design a secure feature"].map((starter) => <button key={starter} onClick={() => setMessage(starter)}>{starter}<ChevronRight size={13} /></button>)}</div></div> : messages.map((item) => <article className="ai-turn" key={item.id}>
           <div className={`ai-message ${item.role === "user" ? "ai-message--owner" : "ai-message--aegis"}`}><div className={`ai-avatar ${item.role === "user" ? "ai-avatar--owner" : "ai-avatar--aegis"}`}>{item.role === "user" ? "S" : <BrainCircuit size={14} />}</div><div className={item.role === "assistant" ? "ai-response" : ""}><span>{item.role === "user" ? "You" : "Aegis"} · {item.model ?? item.provider ?? "local"} · {new Date(item.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>{item.content ? <p>{item.content}{item.streaming && <i className="stream-cursor" />}</p> : item.streaming ? <div className="ai-thinking"><i /><i /><i /> {streamStatus || "Thinking locally…"}</div> : null}{item.error && <small>{item.error}</small>}{item.role === "assistant" && item.content && <div className="ai-message-actions"><button onClick={() => void copyAnswer(item)} title="Copy response">{copiedId === item.id ? <Check size={13} /> : <Copy size={13} />} {copiedId === item.id ? "Copied" : "Copy"}</button></div>}</div></div>
           {item.compilation && <details className="prompt-contract ai-contract"><summary><Sparkles size={11} /> View rewritten execution contract · {item.compilation.risk_level} risk</summary><div><label>Objective</label><p>{item.compilation.objective}</p><label>Compiled prompt</label><pre>{item.compilation.compiled_prompt}</pre><footer><span>{item.compilation.compiler_mode}{item.compilation.rewrite_duration_ms ? ` · ${(item.compilation.rewrite_duration_ms / 1000).toFixed(1)}s rewrite` : ""}</span>{item.compilation.model_routing && <span>{item.compilation.model_routing.label} · {item.compilation.model_routing.resource_fit.replaceAll("_", " ")}</span>}<span>{item.compilation.data_classification}</span></footer></div></details>}
         </article>)}
         {streamStatus && !sending && <div className="ai-stream-status">{streamStatus}</div>}
         <div ref={conversationEnd} />
       </section>
-      {currentConversation?.status === "archived" ? <div className="ai-archived-actions"><Archive size={15} /><span>This encrypted conversation is read-only.</span><button onClick={() => void restoreCurrent()}><ArchiveRestore size={14} /> Restore conversation</button></div> : <div className="ai-composer-dock">{messages.length > 0 && <button className="regenerate-button" disabled={sending} onClick={() => void regenerate()}><RotateCcw size={13} /> Regenerate last response</button>}<form className="ai-composer" onSubmit={submit}><textarea rows={2} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={handleKeyDown} placeholder="Message Aegis…" /><footer><div><LockKeyhole size={13} /> Encrypted history · Live local tokens · Enter to send</div><button aria-label="Send message" disabled={!message.trim() || !project || sending}><Send size={16} /></button></footer></form><small className="ai-disclaimer">Aegis can make mistakes. Verify important business, security, and financial decisions.</small></div>}
+      {currentConversation?.status === "archived" && !privateIncognito ? <div className="ai-archived-actions"><Archive size={15} /><span>This encrypted conversation is read-only.</span><button onClick={() => void restoreCurrent()}><ArchiveRestore size={14} /> Restore conversation</button></div> : <div className="ai-composer-dock">{messages.length > 0 && <button className="regenerate-button" disabled={sending} onClick={() => void regenerate()}><RotateCcw size={13} /> Regenerate last response</button>}<form className="ai-composer" onSubmit={submit}><textarea rows={2} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={handleKeyDown} placeholder="Message Aegis…" /><footer><div><LockKeyhole size={13} /> {privateIncognito ? "Ephemeral · Local only · No memory" : "Encrypted history · Live local tokens · Enter to send"}</div><button aria-label="Send message" disabled={!message.trim() || !project || sending}><Send size={16} /></button></footer></form><small className="ai-disclaimer">Aegis can make mistakes. Verify important business, security, and financial decisions.</small></div>}
     </div>
   </div>;
 }
@@ -1234,24 +1265,108 @@ function AcademyEvidencePanel({ data, onAddMaterial, onAddAssessment }: { data: 
   return <section className="panel academy-evidence"><PanelHeader icon={<ShieldCheck size={17} />} title="Course evidence and evaluation" action={<StatusPill tone={selected?.completion_ready ? "safe" : "warning"}>{selected?.completion_ready ? "completion ready" : "evidence required"}</StatusPill>} /><label>Learning path<select value={courseId} onChange={(event) => setCourseId(event.target.value)}>{data.academy_courses.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label><div className="academy-evidence-grid"><form onSubmit={submitMaterial}><h3>Add permitted material</h3><input required value={material.module_title} onChange={(event) => setMaterial({ ...material, module_title: event.target.value })} placeholder="Module title" /><input value={material.source_url} onChange={(event) => setMaterial({ ...material, source_url: event.target.value })} placeholder="Public HTTPS source (optional)" /><textarea required minLength={40} value={material.content} onChange={(event) => setMaterial({ ...material, content: event.target.value })} placeholder="Your notes or permitted course material…" /><label><input type="checkbox" checked={material.owner_attested} onChange={(event) => setMaterial({ ...material, owner_attested: event.target.checked })} /> I attest I may store this material locally</label><button className="secondary-button">Hash and add material</button></form><form onSubmit={submitAssessment}><h3>Record evaluation</h3><input required value={assessment.title} onChange={(event) => setAssessment({ ...assessment, title: event.target.value })} placeholder="Quiz, exercise, or project" /><select value={assessment.assessment_type} onChange={(event) => setAssessment({ ...assessment, assessment_type: event.target.value })}><option value="quiz">Quiz</option><option value="exercise">Exercise</option><option value="project">Project</option></select><label>Score<input type="number" min="0" max="100" value={assessment.score} onChange={(event) => setAssessment({ ...assessment, score: Number(event.target.value) })} /></label><button className="secondary-button">Record assessment</button><small>80% is the passing threshold. Completion also requires 100% progress and at least one verified or owner-attested material.</small></form></div>{selected && <small>{selected.materials.length} materials · {selected.assessments.filter((item) => item.passed).length} passed assessments · hashes stored locally</small>}</section>;
 }
 
-function AegisHub({ data, onCreateCourse, onUpdateCourse, onAddMaterial, onAddAssessment, onCreateMemory, onMemoryDecision }: {
+function AegisHub({ data, project, onCreateCourse, onUpdateCourse, onAddMaterial, onAddAssessment, onCreateMemory, onMemoryDecision, onUpdateIdentity, onStartSession, onAddSessionNote, onFinishSession }: {
   data: Bootstrap;
+  project: Project | null;
   onCreateCourse: (payload: Record<string, unknown>) => Promise<void>;
   onUpdateCourse: (id: string, status: string, progress: number) => Promise<void>;
   onAddMaterial: (id: string, payload: Record<string, unknown>) => Promise<void>;
   onAddAssessment: (id: string, payload: Record<string, unknown>) => Promise<void>;
   onCreateMemory: (payload: Record<string, unknown>) => Promise<void>;
   onMemoryDecision: (id: string, status: "confirmed" | "disabled") => Promise<void>;
+  onUpdateIdentity: (payload: Record<string, unknown>) => Promise<void>;
+  onStartSession: (payload: Record<string, unknown>) => Promise<void>;
+  onAddSessionNote: (id: string, payload: Record<string, unknown>) => Promise<void>;
+  onFinishSession: (id: string, status: "completed" | "aborted", summary: string) => Promise<void>;
 }) {
-  const [tab, setTab] = useState<"identity" | "academy" | "voice" | "learning">("identity");
+  const profile = data.digital_identity.profile;
+  const activeSession = data.digital_identity.companion_sessions.find((item) => item.status === "active") ?? null;
+  const [tab, setTab] = useState<"identity" | "companion" | "academy" | "voice" | "learning">("identity");
   const [course, setCourse] = useState({ title: "", provider: "Coursera", source_url: "", learning_goal: "" });
   const [preference, setPreference] = useState("");
+  const [profileDraft, setProfileDraft] = useState({ display_name: profile.display_name, role_title: profile.role_title, pronouns: profile.pronouns, conversation_style: profile.conversation_style, presentation_mode: profile.presentation_mode, traits: profile.traits.join(", ") });
+  const [sessionDraft, setSessionDraft] = useState({ session_type: "study", privacy_mode: "standard", screen_access: "local_preview", purpose: "" });
+  const [sessionNote, setSessionNote] = useState("");
+  const [learningCandidate, setLearningCandidate] = useState(false);
+  const [sessionSummary, setSessionSummary] = useState("");
+  const [screenPreview, setScreenPreview] = useState(false);
+  const screenVideo = useRef<HTMLVideoElement | null>(null);
+  const screenStream = useRef<MediaStream | null>(null);
+
+  useEffect(() => {
+    setProfileDraft({ display_name: profile.display_name, role_title: profile.role_title, pronouns: profile.pronouns, conversation_style: profile.conversation_style, presentation_mode: profile.presentation_mode, traits: profile.traits.join(", ") });
+  }, [profile]);
+
+  const stopScreenPreview = () => {
+    screenStream.current?.getTracks().forEach((track) => track.stop());
+    screenStream.current = null;
+    if (screenVideo.current) screenVideo.current.srcObject = null;
+    setScreenPreview(false);
+  };
+
+  useEffect(() => {
+    if (screenPreview && screenVideo.current && screenStream.current) {
+      screenVideo.current.srcObject = screenStream.current;
+      void screenVideo.current.play();
+    }
+  }, [screenPreview]);
+
+  useEffect(() => () => {
+    screenStream.current?.getTracks().forEach((track) => track.stop());
+  }, []);
+
+  const beginScreenPreview = async () => {
+    if (!navigator.mediaDevices?.getDisplayMedia) throw new Error("Screen sharing is unavailable in this browser");
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    screenStream.current = stream;
+    stream.getVideoTracks()[0]?.addEventListener("ended", stopScreenPreview, { once: true });
+    setScreenPreview(true);
+  };
+
+  const submitIdentity = async (event: FormEvent) => {
+    event.preventDefault();
+    await onUpdateIdentity({ ...profileDraft, traits: profileDraft.traits.split(",").map((item) => item.trim()).filter(Boolean) });
+  };
   const submitCourse = async (event: FormEvent) => { event.preventDefault(); await onCreateCourse(course); setCourse({ title: "", provider: "Coursera", source_url: "", learning_goal: "" }); };
   const submitPreference = async (event: FormEvent) => { event.preventDefault(); if (!preference.trim()) return; await onCreateMemory({ kind: "explicit", category: "communication", statement: preference.trim(), reason: "Owner-supplied preference", confidence: 1, affects_authority: false }); setPreference(""); };
+  const submitSession = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!sessionDraft.purpose.trim()) return;
+    if (sessionDraft.screen_access === "local_preview") await beginScreenPreview();
+    await onStartSession({ ...sessionDraft, project_id: project?.id ?? null });
+    setSessionDraft((current) => ({ ...current, purpose: "" }));
+  };
+  const submitSessionNote = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!activeSession || !sessionNote.trim()) return;
+    await onAddSessionNote(activeSession.id, { content: sessionNote.trim(), learning_candidate: learningCandidate });
+    setSessionNote("");
+    setLearningCandidate(false);
+  };
+  const finishSession = async (status: "completed" | "aborted") => {
+    if (!activeSession) return;
+    stopScreenPreview();
+    await onFinishSession(activeSession.id, status, sessionSummary.trim());
+    setSessionSummary("");
+  };
+
   return <div className="single-workspace hub-workspace">
-    <div className="hub-hero"><img src="/aegis-avatar.png" alt="Aegis digital avatar" /><div><div className="eyebrow">OWNER-CONTROLLED DIGITAL PARTNER</div><h2>Aegis Hub</h2><p>Your always-digital executive partner for business conversation, private voice, shared courses, and transparent learning. Aegis can propose; you retain authority.</p><div className="chip-row"><span>Always digital</span><span>Local first</span><span>No silent retraining</span></div></div></div>
-    <div className="segmented-tabs hub-tabs">{(["identity", "academy", "voice", "learning"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</div>
-    {tab === "identity" && <div className="hub-grid"><section className="panel"><PanelHeader icon={<Sparkles size={17} />} title="Digital identity" action={<StatusPill tone="safe">Owner controlled</StatusPill>} /><p>Professional, friendly, direct, factual, ambitious, and evidence-aware. Aegis never presents itself as human and never expands its own permissions.</p></section><section className="panel"><PanelHeader icon={<ShieldCheck size={17} />} title="Authority boundary" /><ul><li>Low-risk analysis and local organization may run directly.</li><li>External, sensitive, financial, publishing, and system-changing work requires approval.</li><li>Learning that changes authority is proposal-only and must pass evaluation.</li></ul></section></div>}
+    <div className="hub-hero"><img src="/aegis-avatar.png" alt="Aegis digital avatar" /><div><div className="eyebrow">OWNER-CONTROLLED DIGITAL EXECUTIVE</div><h2>{profile.display_name} Hub</h2><p>{profile.identity_disclosure} She can learn with you, appear in future media, and accompany consented laptop sessions without gaining independent authority.</p><div className="chip-row"><span>Always digital</span><span>Local first</span><span>Strict truth standard</span><span>Owner controlled</span></div></div></div>
+    <div className="segmented-tabs hub-tabs">{(["identity", "companion", "academy", "voice", "learning"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</div>
+
+    {tab === "identity" && <div className="identity-workspace">
+      <form className="panel identity-form" onSubmit={submitIdentity}><PanelHeader icon={<Sparkles size={17} />} title="Identity profile" action={<StatusPill tone="safe">Owner controlled</StatusPill>} /><div className="identity-form-grid"><label>Name<input minLength={2} required value={profileDraft.display_name} onChange={(event) => setProfileDraft({ ...profileDraft, display_name: event.target.value })} /></label><label>Role title<input minLength={3} required value={profileDraft.role_title} onChange={(event) => setProfileDraft({ ...profileDraft, role_title: event.target.value })} /></label><label>Pronouns<input required value={profileDraft.pronouns} onChange={(event) => setProfileDraft({ ...profileDraft, pronouns: event.target.value })} /></label><label>Conversation style<select value={profileDraft.conversation_style} onChange={(event) => setProfileDraft({ ...profileDraft, conversation_style: event.target.value as typeof profileDraft.conversation_style })}><option value="professional_warm">Professional and warm</option><option value="concise_executive">Concise executive</option><option value="collaborative_deep_dive">Collaborative deep dive</option></select></label><label>Presentation mode<select value={profileDraft.presentation_mode} onChange={(event) => setProfileDraft({ ...profileDraft, presentation_mode: event.target.value as typeof profileDraft.presentation_mode })}><option value="executive">Executive</option><option value="study">Study partner</option><option value="studio">Content studio</option><option value="public_incognito">Public incognito</option></select></label><label className="wide">Traits<input required value={profileDraft.traits} onChange={(event) => setProfileDraft({ ...profileDraft, traits: event.target.value })} placeholder="professional, direct, factual" /></label></div><button className="primary-button">Save presentation settings</button><small>These settings shape presentation only. Truth, security, and approval boundaries cannot be edited here.</small></form>
+      <section className="panel"><PanelHeader icon={<ShieldCheck size={17} />} title="Authority boundary" /><ul className="identity-policy-list"><li><Check size={14} /> Aegis cannot expand her own permissions.</li><li><Check size={14} /> Risky, sensitive, external, publishing, and financial actions remain approval-gated.</li><li><Check size={14} /> Public incognito removes owner/project identifiers; it does not hide that Aegis is AI.</li><li><Check size={14} /> Learning never changes authority.</li></ul></section>
+      <section className="panel identity-assets"><PanelHeader icon={<AppWindow size={17} />} title="Visual identity assets" action={<StatusPill tone="safe">Identity locked</StatusPill>} /><div className="identity-asset-grid">{data.digital_identity.assets.map((asset) => <article key={asset.id}>{asset.public_path ? <img src={asset.public_path} alt={asset.label} /> : <div className="asset-placeholder"><Sparkles size={26} /></div>}<div><StatusPill tone={asset.status === "active" || asset.status === "reference" ? "safe" : "neutral"}>{asset.status}</StatusPill><h3>{asset.label}</h3><p>{asset.asset_type.replaceAll("_", " ")} · {asset.identity_locked ? "facial identity locked" : "editable"}</p></div></article>)}</div></section>
+      <section className="panel"><PanelHeader icon={<Sparkles size={17} />} title="Production path" /><div className="readiness-grid">{Object.entries(data.digital_identity.production_readiness).map(([key, value]) => <div key={key}><span>{key.replaceAll("_", " ")}</span><strong>{value.replaceAll("_", " ")}</strong></div>)}</div><p className="muted">The full-body master is ready as a visual reference. Motion rigging, repeatable lip sync, and public accounts remain separate approval-gated production stages.</p></section>
+    </div>}
+
+    {tab === "companion" && <div className="companion-layout">
+      <section className="panel companion-stage"><PanelHeader icon={<AppWindow size={17} />} title="Laptop companion" action={<StatusPill tone={activeSession ? "safe" : "neutral"}>{activeSession ? "Session active" : "Permission each time"}</StatusPill>} />{screenPreview ? <video ref={screenVideo} muted playsInline className="screen-preview" /> : <div className="screen-preview screen-preview--empty"><AppWindow size={38} /><strong>No screen is shared</strong><p>A browser permission prompt is required every session.</p></div>}<div className="privacy-facts"><span><LockKeyhole size={13} /> Preview stays in this browser</span><span><Square size={13} /> No recording</span><span><BrainCircuit size={13} /> No automatic visual analysis yet</span></div>{screenPreview && <button className="secondary-button" onClick={stopScreenPreview}>Stop screen preview</button>}</section>
+      {!activeSession ? <form className="panel companion-form" onSubmit={submitSession}><PanelHeader icon={<BrainCircuit size={17} />} title="Start a guided session" /><label>Session type<select value={sessionDraft.session_type} onChange={(event) => setSessionDraft({ ...sessionDraft, session_type: event.target.value })}><option value="study">Study</option><option value="task">Task</option><option value="research">Research</option><option value="creative">Creative</option></select></label><label>Privacy<select value={sessionDraft.privacy_mode} onChange={(event) => setSessionDraft({ ...sessionDraft, privacy_mode: event.target.value })}><option value="standard">Standard · encrypted notes</option><option value="private_incognito">Private incognito · metadata only</option></select></label><label>Screen access<select value={sessionDraft.screen_access} onChange={(event) => setSessionDraft({ ...sessionDraft, screen_access: event.target.value })}><option value="local_preview">Local preview</option><option value="none">No screen</option></select></label><label>Purpose<textarea required value={sessionDraft.purpose} onChange={(event) => setSessionDraft({ ...sessionDraft, purpose: event.target.value })} placeholder="What are we learning or working through?" /></label><button className="primary-button">Start session</button><small>Screen frames are not uploaded or stored. Until a local vision model is added, teach Aegis through explicit notes and conversation.</small></form> : <section className="panel companion-active"><PanelHeader icon={<BrainCircuit size={17} />} title={`${activeSession.session_type} session`} action={<StatusPill tone={activeSession.privacy_mode === "private_incognito" ? "warning" : "safe"}>{activeSession.privacy_mode.replaceAll("_", " ")}</StatusPill>} /><p>{activeSession.purpose || "Purpose hidden by incognito policy"}</p>{activeSession.privacy_mode === "standard" ? <form onSubmit={submitSessionNote}><textarea value={sessionNote} onChange={(event) => setSessionNote(event.target.value)} placeholder="Record what Aegis should understand from this step…" /><label className="check-label"><input type="checkbox" checked={learningCandidate} onChange={(event) => setLearningCandidate(event.target.checked)} /> Propose this note as a learning candidate</label><button className="secondary-button" disabled={!sessionNote.trim()}>Save local note</button></form> : <div className="incognito-notice"><LockKeyhole size={18} /><p>Notes, summaries, and learning candidates are blocked for this session. Only minimal audit metadata remains.</p></div>}<textarea value={sessionSummary} onChange={(event) => setSessionSummary(event.target.value)} disabled={activeSession.privacy_mode === "private_incognito"} placeholder="Optional closing summary" /><div className="companion-actions"><button onClick={() => void finishSession("aborted")}>Abort</button><button className="primary-button" onClick={() => void finishSession("completed")}>Complete session</button></div></section>}
+      <section className="panel companion-history"><PanelHeader icon={<Activity size={17} />} title="Session record" />{data.digital_identity.companion_sessions.length === 0 ? <p className="muted">No companion sessions recorded yet.</p> : data.digital_identity.companion_sessions.slice(0, 8).map((item) => <article key={item.id}><div><strong>{item.session_type}</strong><span>{item.privacy_mode.replaceAll("_", " ")} · {relativeTime(item.started_at)}</span></div><StatusPill tone={item.status === "active" ? "safe" : "neutral"}>{item.status}</StatusPill><p>{item.purpose || "Content withheld by incognito policy"}</p><small>{item.notes.length} retained notes · {item.retention_policy.replaceAll("_", " ")}</small></article>)}</section>
+    </div>}
+
     {tab === "academy" && <div className="academy-layout"><form className="panel academy-form" onSubmit={submitCourse}><PanelHeader icon={<BrainCircuit size={17} />} title="Add a learning path" /><label>Course title<input required value={course.title} onChange={(event) => setCourse({ ...course, title: event.target.value })} placeholder="Course or subject" /></label><label>Provider<input required value={course.provider} onChange={(event) => setCourse({ ...course, provider: event.target.value })} placeholder="Coursera, edX, YouTube…" /></label><label>Public course link <span>optional</span><input value={course.source_url} onChange={(event) => setCourse({ ...course, source_url: event.target.value })} placeholder="Official or permitted course URL" /></label><label>Learning goal<textarea value={course.learning_goal} onChange={(event) => setCourse({ ...course, learning_goal: event.target.value })} placeholder="What should we be able to do after this?" /></label><button className="primary-button">Add to Academy</button><small>Credentials are not connected. Aegis stores only the course plan and public link until you approve an official integration.</small></form><section><div className="learning-cycle">Learn → Practice → Evaluate → Propose skill update → Approve → Release</div>{data.academy_courses.length === 0 ? <EmptyState icon={<BrainCircuit />} title="Academy is ready" body="Add a course and learn it with Aegis through notes, exercises, business applications, and review." /> : <div className="course-list">{data.academy_courses.map((item) => <article className="entity-card" key={item.id}><div className="entity-card__top"><StatusPill tone={item.status === "completed" ? "safe" : "neutral"}>{item.status}</StatusPill><span>{Math.round(item.progress)}%</span></div><h3>{item.title}</h3><p>{item.provider} · {item.learning_goal || "Goal not set"}</p><div className="progress-track"><i style={{ width: `${item.progress}%` }} /></div><footer>{item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">Official course <ArrowUpRight size={12} /></a> : <span>Local plan</span>}<button onClick={() => void onUpdateCourse(item.id, item.progress >= 100 ? "completed" : "active", Math.min(100, item.progress + 10))}>+10%</button></footer></article>)}</div>}</section></div>}
     {tab === "academy" && <AcademyEvidencePanel data={data} onAddMaterial={onAddMaterial} onAddAssessment={onAddAssessment} />}
     {tab === "voice" && <PrivateVoiceSession status={data.voice} />}

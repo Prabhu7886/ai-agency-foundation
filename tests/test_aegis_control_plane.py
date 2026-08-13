@@ -876,6 +876,80 @@ def test_academy_and_controlled_learning_are_local_and_reviewable(store: AegisSt
     assert store.set_learning_memory_status(inferred["id"], "disabled")["status"] == "disabled"
 
 
+def test_digital_identity_profile_cannot_change_authority(store: AegisStore) -> None:
+    profile = store.get_identity_profile()
+    assert profile["embodiment"] == "always_digital"
+    assert profile["authority_model"] == "owner_controlled"
+    assert profile["authority_boundary"]["self_permission_expansion"] is False
+    assert {item["asset_type"] for item in store.list_identity_assets()} == {"portrait", "full_body", "motion_rig"}
+
+    updated = store.update_identity_profile({
+        "display_name": "Aegis",
+        "role_title": "Digital Executive Partner",
+        "pronouns": "she/her",
+        "conversation_style": "collaborative_deep_dive",
+        "presentation_mode": "study",
+        "traits": ["direct", "factual", "friendly"],
+        "authority_model": "self_governing",
+    })
+    assert updated["presentation_mode"] == "study"
+    assert updated["authority_model"] == "owner_controlled"
+    assert updated["truth_standard"] == "strict"
+
+
+def test_standard_companion_session_creates_reviewable_learning_candidate(store: AegisStore, tmp_path: Path) -> None:
+    project = store.create_project("Companion", "Guided session", tmp_path / "projects" / "companion", None)
+    session = store.start_companion_session({
+        "project_id": project["id"],
+        "session_type": "study",
+        "privacy_mode": "standard",
+        "screen_access": "local_preview",
+        "purpose": "Learn evidence-based product discovery",
+    })
+    assert session["retention_policy"] == "notes_only"
+    updated = store.add_companion_note(session["id"], {
+        "content": "Start recommendations with the strongest verified constraint.",
+        "learning_candidate": True,
+    })
+    assert updated["notes"][0]["learning_candidate"] is True
+    candidate = next(item for item in store.list_learning_memory() if item["category"] == "learning")
+    assert candidate["status"] == "proposed"
+    assert candidate["kind"] == "inferred"
+    assert store.finish_companion_session(session["id"], "completed", "Completed together")["summary"] == "Completed together"
+
+
+def test_private_incognito_companion_session_retains_metadata_only(store: AegisStore) -> None:
+    session = store.start_companion_session({
+        "session_type": "task",
+        "privacy_mode": "private_incognito",
+        "screen_access": "local_preview",
+        "purpose": "Sensitive private work that must not be retained",
+    })
+    assert session["purpose"] == ""
+    assert session["retention_policy"] == "metadata_only"
+    with pytest.raises(ValueError, match="do not retain notes"):
+        store.add_companion_note(session["id"], {"content": "Do not store this", "learning_candidate": False})
+    closed = store.finish_companion_session(session["id"], "completed", "Do not retain this summary")
+    assert closed["summary"] == ""
+    assert closed["notes"] == []
+
+
+def test_only_one_companion_session_can_be_active(store: AegisStore) -> None:
+    store.start_companion_session({
+        "session_type": "research",
+        "privacy_mode": "standard",
+        "screen_access": "none",
+        "purpose": "First bounded session",
+    })
+    with pytest.raises(ValueError, match="Finish the active"):
+        store.start_companion_session({
+            "session_type": "creative",
+            "privacy_mode": "standard",
+            "screen_access": "none",
+            "purpose": "Second overlapping session",
+        })
+
+
 def test_academy_completion_requires_material_and_passed_assessment(store: AegisStore) -> None:
     course = store.create_academy_course({"title": "Evidence Course", "provider": "Owner", "learning_goal": "Use reliable sources"})
     with pytest.raises(ValueError, match="verified material"):

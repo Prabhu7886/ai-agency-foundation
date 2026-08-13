@@ -69,6 +69,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=50_000)
     conversation_id: str | None = Field(default=None, min_length=2, max_length=100)
     history: list[ChatHistoryMessage] = Field(default_factory=list, max_length=12)
+    privacy_mode: Literal["standard", "private_incognito"] = "standard"
 
 
 class ConversationCreate(BaseModel):
@@ -238,6 +239,46 @@ class LearningMemoryCreate(BaseModel):
 
 class LearningMemoryDecision(BaseModel):
     status: Literal["confirmed", "disabled"]
+
+
+class IdentityProfileUpdate(BaseModel):
+    display_name: str = Field(min_length=2, max_length=40)
+    role_title: str = Field(min_length=3, max_length=100)
+    pronouns: str = Field(default="she/her", min_length=2, max_length=30)
+    conversation_style: Literal["professional_warm", "concise_executive", "collaborative_deep_dive"]
+    presentation_mode: Literal["executive", "study", "studio", "public_incognito"]
+    traits: list[str] = Field(min_length=3, max_length=8)
+
+    @field_validator("display_name", "role_title", "pronouns", mode="before")
+    @classmethod
+    def strip_identity_text(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("traits")
+    @classmethod
+    def validate_traits(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip().lower() for item in value if item.strip()]
+        if len(cleaned) < 3 or any(len(item) > 40 for item in cleaned):
+            raise ValueError("Provide 3-8 concise identity traits")
+        return list(dict.fromkeys(cleaned))
+
+
+class CompanionSessionCreate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=100)
+    session_type: Literal["study", "task", "research", "creative"]
+    privacy_mode: Literal["standard", "private_incognito"] = "standard"
+    screen_access: Literal["none", "local_preview"] = "none"
+    purpose: str = Field(min_length=3, max_length=1000)
+
+
+class CompanionNoteCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=10_000)
+    learning_candidate: bool = False
+
+
+class CompanionSessionComplete(BaseModel):
+    status: Literal["completed", "aborted"] = "completed"
+    summary: str = Field(default="", max_length=5_000)
 
 
 class AgentControlRequest(BaseModel):

@@ -27,14 +27,17 @@ The architecture should be reconsidered only if measured constraints justify it,
 Workspaces are permanent executive surfaces:
 
 1. Executive Home
-2. Agent Fleet
-3. World Pulse
-4. Opportunity Engine
-5. Solution Factory
-6. Approval Center
-7. Security Sentinel
-8. Voice Lounge
-9. Data Lab
+2. AI Workspace
+3. Agent Fleet
+4. World Pulse
+5. Opportunity Engine
+6. Solution Factory
+7. Approval Center
+8. Security Sentinel
+9. Aegis Hub
+10. Data Lab
+
+Aegis Hub owns the encrypted digital identity profile, versioned portrait/full-body assets, consented companion sessions, Academy, local voice, and reviewable learning memory. Private incognito chat is enforced by AI Workspace and creates no conversation, task, prompt, memory, or learning record.
 
 Projects are Codex-style working contexts with a registered local root, optional GitHub repository, tasks, activity, and scoped agent work.
 
@@ -64,6 +67,7 @@ FastAPI control plane (loopback-only session)
         |     +-- approvals and activity
         |     +-- World Pulse, opportunities, and solutions
         |     +-- agent snapshots, incidents, controls, and learning reports
+        |     +-- identity profile, asset manifest, companion metadata, and owner notes
         |
         +-- authenticated loopback Agent Bridge supervision
         |     +-- Commerce (independent runtime and encrypted store)
