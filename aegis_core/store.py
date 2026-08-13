@@ -1259,6 +1259,84 @@ class AegisStore:
                 raise KeyError("World Pulse schedule not found")
         return next(item for item in self.list_world_pulse_schedules() if item["id"] == schedule_id)
 
+    def set_world_pulse_schedule_status(self, schedule_id: str, status: str) -> dict[str, Any]:
+        if status not in {"planned", "paused"}:
+            raise ValueError("Unsupported World Pulse schedule status")
+        now = utc_now()
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                "UPDATE aegis_world_pulse_schedules SET status = ?, updated_at = ? WHERE id = ?",
+                (status, now, schedule_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("World Pulse schedule not found")
+            self._activity(connection, "pulse_schedule_status", f"World Pulse schedule set to {status}", "pulse_schedule", schedule_id)
+        return next(item for item in self.list_world_pulse_schedules() if item["id"] == schedule_id)
+
+    def due_world_pulse_schedules(self, now: datetime | None = None) -> list[dict[str, Any]]:
+        anchor = now or datetime.now(timezone.utc)
+        due: list[dict[str, Any]] = []
+        for item in self.list_world_pulse_schedules():
+            if item["status"] != "planned":
+                continue
+            last = item.get("last_requested_at")
+            if not last or anchor - datetime.fromisoformat(str(last)) >= timedelta(hours=int(item["cadence_hours"])):
+                due.append(item)
+        return due
+
+    def list_opportunity_cycles(self) -> list[dict[str, Any]]:
+        with self.database.connection() as connection:
+            return self._rows(connection.execute("SELECT * FROM aegis_opportunity_cycles ORDER BY updated_at DESC"))
+
+    def create_opportunity_cycle(self, payload: dict[str, Any]) -> dict[str, Any]:
+        cycle_id = new_id("opportunity-cycle")
+        now = utc_now()
+        with self.database.connection() as connection:
+            connection.execute(
+                """INSERT INTO aegis_opportunity_cycles
+                (id, name, niche, query, allocation, cadence_hours, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
+                (cycle_id, payload["name"], payload["niche"], payload["query"], payload["allocation"], payload["cadence_hours"], now, now),
+            )
+            self._activity(connection, "opportunity_cycle_created", f"Created recurring opportunity cycle: {payload['name']}", "opportunity_cycle", cycle_id)
+        return next(item for item in self.list_opportunity_cycles() if item["id"] == cycle_id)
+
+    def set_opportunity_cycle_status(self, cycle_id: str, status: str) -> dict[str, Any]:
+        if status not in {"active", "paused"}:
+            raise ValueError("Unsupported opportunity cycle status")
+        now = utc_now()
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                "UPDATE aegis_opportunity_cycles SET status = ?, updated_at = ? WHERE id = ?",
+                (status, now, cycle_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("Opportunity cycle not found")
+            self._activity(connection, "opportunity_cycle_status", f"Opportunity cycle set to {status}", "opportunity_cycle", cycle_id)
+        return next(item for item in self.list_opportunity_cycles() if item["id"] == cycle_id)
+
+    def due_opportunity_cycles(self, now: datetime | None = None) -> list[dict[str, Any]]:
+        anchor = now or datetime.now(timezone.utc)
+        return [
+            item for item in self.list_opportunity_cycles()
+            if item["status"] == "active" and (
+                not item.get("last_run_at")
+                or anchor - datetime.fromisoformat(str(item["last_run_at"])) >= timedelta(hours=int(item["cadence_hours"]))
+            )
+        ]
+
+    def mark_opportunity_cycle_run(self, cycle_id: str, fingerprint: str | None) -> dict[str, Any]:
+        now = utc_now()
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                """UPDATE aegis_opportunity_cycles SET last_run_at = ?, last_candidate_fingerprint = ?, updated_at = ?
+                WHERE id = ?""",
+                (now, fingerprint, now, cycle_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("Opportunity cycle not found")
+        return next(item for item in self.list_opportunity_cycles() if item["id"] == cycle_id)
+
     def add_world_pulse(
         self,
         *,
@@ -1420,7 +1498,26 @@ class AegisStore:
 
     def list_academy_courses(self) -> list[dict[str, Any]]:
         with self.database.connection() as connection:
-            return self._rows(connection.execute("SELECT * FROM aegis_academy_courses ORDER BY updated_at DESC"))
+            courses = self._rows(connection.execute("SELECT * FROM aegis_academy_courses ORDER BY updated_at DESC"))
+            for course in courses:
+                course["materials"] = self._rows(connection.execute(
+                    """SELECT id, course_id, module_title, source_url, content_sha256, verification_state, created_at
+                    FROM aegis_academy_materials WHERE course_id = ? ORDER BY created_at""",
+                    (course["id"],),
+                ))
+                course["assessments"] = self._rows(connection.execute(
+                    "SELECT * FROM aegis_academy_assessments WHERE course_id = ? ORDER BY created_at",
+                    (course["id"],),
+                ))
+                for assessment in course["assessments"]:
+                    assessment["passed"] = bool(assessment["passed"])
+                    assessment["evidence"] = self._decode(assessment.pop("evidence_json"), {})
+                course["completion_ready"] = (
+                    float(course.get("progress", 0)) >= 100
+                    and bool(course["materials"])
+                    and any(item["passed"] for item in course["assessments"])
+                )
+        return courses
 
     def create_academy_course(self, payload: dict[str, Any]) -> dict[str, Any]:
         course_id = new_id("course")
@@ -1440,6 +1537,17 @@ class AegisStore:
             raise ValueError("Unsupported course status")
         now = utc_now()
         with self.database.connection() as connection:
+            if status == "completed":
+                material_count = int(connection.execute(
+                    "SELECT COUNT(*) FROM aegis_academy_materials WHERE course_id = ? AND verification_state != 'unverified'",
+                    (course_id,),
+                ).fetchone()[0])
+                passed_count = int(connection.execute(
+                    "SELECT COUNT(*) FROM aegis_academy_assessments WHERE course_id = ? AND passed = 1",
+                    (course_id,),
+                ).fetchone()[0])
+                if progress < 100 or material_count < 1 or passed_count < 1:
+                    raise ValueError("Course completion requires 100% progress, verified material, and a passed assessment")
             cursor = connection.execute(
                 "UPDATE aegis_academy_courses SET status = ?, progress = ?, updated_at = ? WHERE id = ?",
                 (status, progress, now, course_id),
@@ -1448,6 +1556,69 @@ class AegisStore:
                 raise KeyError("Course not found")
             self._activity(connection, "academy_progress_updated", f"Course progress updated to {progress:.0f}%", "academy_course", course_id)
         return next(item for item in self.list_academy_courses() if item["id"] == course_id)
+
+    def add_academy_material(self, course_id: str, payload: dict[str, Any], verification_state: str) -> dict[str, Any]:
+        material_id = new_id("course-material")
+        content = str(payload["content"])
+        now = utc_now()
+        with self.database.connection() as connection:
+            if not connection.execute("SELECT 1 FROM aegis_academy_courses WHERE id = ?", (course_id,)).fetchone():
+                raise KeyError("Course not found")
+            connection.execute(
+                """INSERT INTO aegis_academy_materials
+                (id, course_id, module_title, source_url, content, content_sha256, verification_state, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (material_id, course_id, payload["module_title"], payload.get("source_url"), content, hashlib.sha256(content.encode()).hexdigest(), verification_state, now),
+            )
+            self._activity(connection, "academy_material_added", f"Added verified course material: {payload['module_title']}", "academy_course", course_id)
+        return next(item for item in self.list_academy_courses() if item["id"] == course_id)
+
+    def add_academy_assessment(self, course_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        assessment_id = new_id("assessment")
+        passed = float(payload["score"]) >= 80
+        now = utc_now()
+        with self.database.connection() as connection:
+            if not connection.execute("SELECT 1 FROM aegis_academy_courses WHERE id = ?", (course_id,)).fetchone():
+                raise KeyError("Course not found")
+            connection.execute(
+                """INSERT INTO aegis_academy_assessments
+                (id, course_id, title, assessment_type, score, passed, evidence_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (assessment_id, course_id, payload["title"], payload["assessment_type"], payload["score"], int(passed), json.dumps(payload.get("evidence", {})), now),
+            )
+            self._activity(connection, "academy_assessment_recorded", f"Recorded Academy assessment: {payload['title']}", "academy_course", course_id)
+        return next(item for item in self.list_academy_courses() if item["id"] == course_id)
+
+    def create_containment_drill(self, agent_id: str) -> dict[str, Any]:
+        drill_id = new_id("containment-drill")
+        now = utc_now()
+        with self.database.connection() as connection:
+            connection.execute(
+                "INSERT INTO aegis_containment_drills (id, agent_id, status, report_json, created_at) VALUES (?, ?, 'running', '{}', ?)",
+                (drill_id, agent_id, now),
+            )
+        return {"id": drill_id, "agent_id": agent_id, "status": "running", "created_at": now}
+
+    def finish_containment_drill(self, drill_id: str, status: str, report: dict[str, Any]) -> dict[str, Any]:
+        if status not in {"passed", "failed"}:
+            raise ValueError("Unsupported containment drill status")
+        now = utc_now()
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                "UPDATE aegis_containment_drills SET status = ?, report_json = ?, completed_at = ? WHERE id = ?",
+                (status, json.dumps(report), now, drill_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("Containment drill not found")
+            self._activity(connection, "containment_drill", f"Containment drill {status}", "containment_drill", drill_id)
+        return {"id": drill_id, "status": status, "report": report, "completed_at": now}
+
+    def list_containment_drills(self) -> list[dict[str, Any]]:
+        with self.database.connection() as connection:
+            rows = self._rows(connection.execute("SELECT * FROM aegis_containment_drills ORDER BY created_at DESC LIMIT 20"))
+        for row in rows:
+            row["report"] = self._decode(row.pop("report_json"), {})
+        return rows
 
     def list_learning_memory(self) -> list[dict[str, Any]]:
         with self.database.connection() as connection:
@@ -1539,6 +1710,29 @@ class AegisStore:
             return self._rows(
                 connection.execute("SELECT * FROM aegis_activity ORDER BY id DESC LIMIT ?", (max(1, min(limit, 200)),))
             )
+
+    def search(self, query: str, limit: int = 40) -> list[dict[str, Any]]:
+        clean = " ".join(query.split()).strip()
+        if len(clean) < 2:
+            return []
+        pattern = f"%{clean}%"
+        bounded = max(1, min(limit, 100))
+        searches = (
+            ("project", "SELECT id, name AS title, description AS summary, updated_at AS occurred_at FROM aegis_projects WHERE name LIKE ? OR description LIKE ? ORDER BY updated_at DESC LIMIT ?"),
+            ("task", "SELECT id, title, COALESCE(result_summary, prompt) AS summary, updated_at AS occurred_at FROM aegis_tasks WHERE title LIKE ? OR prompt LIKE ? OR result_summary LIKE ? ORDER BY updated_at DESC LIMIT ?"),
+            ("world_pulse", "SELECT id, headline AS title, summary, collected_at AS occurred_at FROM aegis_world_pulse WHERE headline LIKE ? OR summary LIKE ? ORDER BY collected_at DESC LIMIT ?"),
+            ("opportunity", "SELECT id, title, thesis AS summary, updated_at AS occurred_at FROM aegis_opportunities WHERE title LIKE ? OR thesis LIKE ? ORDER BY updated_at DESC LIMIT ?"),
+            ("solution", "SELECT id, title, problem AS summary, updated_at AS occurred_at FROM aegis_solutions WHERE title LIKE ? OR problem LIKE ? ORDER BY updated_at DESC LIMIT ?"),
+            ("course", "SELECT id, title, learning_goal AS summary, updated_at AS occurred_at FROM aegis_academy_courses WHERE title LIKE ? OR learning_goal LIKE ? ORDER BY updated_at DESC LIMIT ?"),
+        )
+        results: list[dict[str, Any]] = []
+        with self.database.connection() as connection:
+            for kind, statement in searches:
+                placeholders = statement.count("?")
+                params = [pattern] * (placeholders - 1) + [bounded]
+                for row in self._rows(connection.execute(statement, params)):
+                    results.append({"kind": kind, **row})
+        return sorted(results, key=lambda item: str(item.get("occurred_at", "")), reverse=True)[:bounded]
 
     def overview(self) -> dict[str, Any]:
         with self.database.connection() as connection:

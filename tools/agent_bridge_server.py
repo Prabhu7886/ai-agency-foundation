@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import psutil
+import requests
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -85,6 +86,49 @@ class RuntimeAdapter:
         raw = self.agent.fleet_health()
         if hasattr(raw, "model_dump"):
             raw = raw.model_dump(mode="json")
+        if self.kind == "commerce":
+            checks = [item for item in raw.get("checks", []) if item.get("name") not in {"local_model_endpoint", "etsy_connection", "erank_connection"}]
+            endpoint = self.agent._verify_local_ollama()
+            model_check: dict[str, Any]
+            try:
+                session = requests.Session()
+                session.trust_env = False
+                response = session.get(f"{endpoint}/api/tags", timeout=(0.5, 2.0), allow_redirects=False)
+                response.raise_for_status()
+                models = [str(item.get("name", "")) for item in response.json().get("models", [])]
+                model_check = {
+                    "name": "local_model_endpoint",
+                    "status": "pass" if models else "fail",
+                    "detail": f"Loopback Ollama reported {len(models)} installed model(s)." if models else "Ollama responded without an installed model.",
+                    "observed_at": utc_now(),
+                }
+            except Exception as exc:
+                models = []
+                model_check = {
+                    "name": "local_model_endpoint",
+                    "status": "fail",
+                    "detail": f"Loopback Ollama health check failed: {str(exc)[:180]}",
+                    "observed_at": utc_now(),
+                }
+            marketplace_configured = bool(os.getenv("ETSY_API_KEY") and os.getenv("ETSY_SHOP_ID"))
+            checks.extend([
+                model_check,
+                {
+                    "name": "etsy_connection",
+                    "status": "pass" if marketplace_configured else "unknown",
+                    "detail": "Credential presence verified; no secret value exposed." if marketplace_configured else "Not configured. Local research and listing-package work remains available.",
+                    "observed_at": utc_now(),
+                    "required_for_local_cycle": False,
+                },
+                {
+                    "name": "erank_connection",
+                    "status": "unknown",
+                    "detail": "Optional owner-provided CSV import; no live credential required.",
+                    "observed_at": utc_now(),
+                    "required_for_local_cycle": False,
+                },
+            ])
+            raw = {**raw, "checks": checks, "model_inventory": models, "status": "healthy" if model_check["status"] == "pass" else "degraded"}
         state = str(raw.get("status") or raw.get("state") or "degraded")
         if self.state.public_status()["quarantined"]:
             state = "quarantined"
@@ -103,7 +147,15 @@ class RuntimeAdapter:
             domain = {"opportunities": opportunities, "products": products, "pending_approvals": pending_approvals}
         else:
             workspace = self.agent.workspace()
-            tasks_by_status = {"completed": len(workspace.get("resumes", [])) + len(workspace.get("interviews", []))}
+            records = self.state.task_records(250)
+            tasks_by_status: dict[str, int] = {}
+            for record in records:
+                state = str(record.get("status", "unknown"))
+                tasks_by_status[state] = tasks_by_status.get(state, 0) + 1
+            if not records:
+                completed_outputs = len(workspace.get("jobs", [])) + len(workspace.get("resumes", [])) + len(workspace.get("interviews", []))
+                if completed_outputs:
+                    tasks_by_status["completed"] = completed_outputs
             domain = {
                 "profile_facts": len(workspace.get("profile", {}).get("facts", [])),
                 "jobs": len(workspace.get("jobs", [])),
@@ -112,11 +164,20 @@ class RuntimeAdapter:
             }
         total = sum(tasks_by_status.values())
         failed = tasks_by_status.get("failed", 0)
+        # Duration and last-run timing come only from the encrypted bridge ledger.
+        # Older database rows remain valid counts but are not given invented timings.
+        task_records = self.state.task_records(250)
+        durations = [int(item["duration_ms"]) for item in task_records if item.get("duration_ms") is not None]
+        completed = tasks_by_status.get("completed", 0) + tasks_by_status.get("partial", 0)
         process = psutil.Process(os.getpid())
         return {
             "tasks_total": total,
             "tasks_by_status": tasks_by_status,
             "failure_rate": round(failed / total, 4) if total else 0,
+            "success_rate": round(completed / total, 4) if total else 0,
+            "average_duration_ms": round(sum(durations) / len(durations)) if durations else 0,
+            "last_success_at": next((item.get("updated_at") for item in task_records if item.get("status") == "completed"), None),
+            "last_failure_at": next((item.get("updated_at") for item in task_records if item.get("status") == "failed"), None),
             "domain": domain,
             "resources": {
                 "cpu_percent": process.cpu_percent(interval=None),
@@ -137,6 +198,9 @@ class RuntimeAdapter:
                 for row in rows
             ]
         workspace = self.agent.workspace()
+        records = self.state.task_records(25)
+        if records:
+            return records
         items: list[dict[str, Any]] = []
         for category in ("jobs", "resumes", "interviews"):
             for item in reversed(workspace.get(category, [])):
@@ -225,6 +289,10 @@ def create_app(kind: str) -> FastAPI:
     @app.post("/v1/learning/{update_id}/rollback", dependencies=[Depends(authenticate)])
     async def rollback(update_id: str, payload: RollbackRequest) -> dict[str, Any]:
         return runtime.state.rollback_learning(update_id, payload.reason)
+
+    @app.post("/v1/drill/containment", dependencies=[Depends(authenticate)])
+    async def containment_drill() -> dict[str, Any]:
+        return runtime.state.run_containment_drill()
 
     app.state.runtime = runtime
     return app

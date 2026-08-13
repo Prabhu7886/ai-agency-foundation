@@ -44,6 +44,7 @@ class WebResearchService:
         *,
         approved_session: bool = False,
         verify_pages: bool = True,
+        approved_sources: list[dict[str, Any] | str] | None = None,
     ) -> dict[str, Any]:
         clean = self.guard.sanitize_public_query(query)
         offline = os.getenv("AI_AGENCY_OFFLINE_MODE", "true").lower() == "true"
@@ -60,15 +61,25 @@ class WebResearchService:
             f"{clean} official data report statistics "
             "(site:.gov OR site:worldbank.org OR site:imf.org OR site:oecd.org OR site:un.org)"
         )
+        monitored_queries, monitored_sources = self._approved_source_queries(clean, approved_sources or [])
         lane_status: dict[str, dict[str, Any]] = {
+            "approved_sources": {
+                "requested": len(monitored_queries),
+                "accepted": 0,
+                "error": None,
+            },
             "primary": {"requested": self.PRIMARY_LIMITS[depth], "accepted": 0, "error": None},
             "discovery": {"requested": limit, "accepted": 0, "error": None},
         }
         with DDGS() as search:
-            for lane, lane_query, lane_limit in (
+            lanes = [
+                ("approved_sources", lane_query, 1)
+                for lane_query in monitored_queries
+            ] + [
                 ("primary", primary_query, self.PRIMARY_LIMITS[depth]),
                 ("discovery", clean, limit),
-            ):
+            ]
+            for lane, lane_query, lane_limit in lanes:
                 try:
                     results = search.text(lane_query, max_results=lane_limit)
                     for item in results:
@@ -112,6 +123,11 @@ class WebResearchService:
             "cross_referenced": len(domains) >= 2,
             "domains": dict(domains),
             "research_lanes": lane_status,
+            "approved_source_monitoring": {
+                "configured": len(monitored_sources),
+                "sources": monitored_sources,
+                "results_accepted": lane_status["approved_sources"]["accepted"],
+            },
             "page_verification": {
                 "requested": verify_pages,
                 "verified": sum(count for state, count in verification_counts.items() if state.startswith("verified_")),
@@ -122,6 +138,49 @@ class WebResearchService:
             "researched_at": datetime.now(timezone.utc).isoformat(),
             "classification": "public-only",
         }
+
+    @classmethod
+    def _approved_source_queries(
+        cls,
+        query: str,
+        sources: list[dict[str, Any] | str],
+    ) -> tuple[list[str], list[dict[str, str]]]:
+        """Create bounded search lanes from sources that already passed owner approval.
+
+        URLs become hostname-restricted searches. Public handles are quoted so they
+        remain search terms rather than commands. The original locator is retained
+        only as provenance and is never fetched directly by this helper.
+        """
+        queries: list[str] = []
+        normalized: list[dict[str, str]] = []
+        for item in sources[:20]:
+            if isinstance(item, dict):
+                locator = str(item.get("locator", "")).strip()
+                source_type = str(item.get("source_type", "approved_source"))[:50]
+                label = str(item.get("label", locator))[:200]
+            else:
+                locator = str(item).strip()
+                source_type = "approved_source"
+                label = locator[:200]
+            if not locator:
+                continue
+            parsed = urlparse(locator)
+            search_term = ""
+            if parsed.scheme == "https" and parsed.hostname and not parsed.username and not parsed.password:
+                hostname = parsed.hostname.lower().rstrip(".").removeprefix("www.")
+                if hostname == "localhost" or hostname.endswith(".localhost"):
+                    continue
+                search_term = f"site:{hostname}"
+            elif re.fullmatch(r"@[A-Za-z0-9_]{1,50}", locator):
+                search_term = f'"{locator}"'
+            else:
+                continue
+            lane_query = f"{query} {search_term}"
+            if len(lane_query) > 500:
+                continue
+            queries.append(lane_query)
+            normalized.append({"label": label, "source_type": source_type, "locator": locator[:2000]})
+        return queries, normalized
 
     @staticmethod
     def _canonical_url(value: str) -> str | None:

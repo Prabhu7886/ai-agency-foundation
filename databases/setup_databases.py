@@ -416,6 +416,20 @@ CREATE TABLE IF NOT EXISTS aegis_world_pulse_schedules (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS aegis_opportunity_cycles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    niche TEXT NOT NULL,
+    query TEXT NOT NULL,
+    allocation TEXT NOT NULL CHECK(allocation IN ('existing-80', 'explore-20')),
+    cadence_hours INTEGER NOT NULL CHECK(cadence_hours BETWEEN 1 AND 720),
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused')),
+    last_run_at TEXT,
+    last_candidate_fingerprint TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS aegis_research_reports (
     id TEXT PRIMARY KEY,
     project_id TEXT REFERENCES aegis_projects(id) ON DELETE SET NULL,
@@ -466,6 +480,41 @@ CREATE TABLE IF NOT EXISTS aegis_academy_courses (
     learning_goal TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aegis_academy_materials (
+    id TEXT PRIMARY KEY,
+    course_id TEXT NOT NULL REFERENCES aegis_academy_courses(id) ON DELETE CASCADE,
+    module_title TEXT NOT NULL,
+    source_url TEXT,
+    content TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    verification_state TEXT NOT NULL CHECK(verification_state IN ('owner_attested', 'public_source', 'unverified')),
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_academy_materials_course
+ON aegis_academy_materials(course_id, created_at);
+
+CREATE TABLE IF NOT EXISTS aegis_academy_assessments (
+    id TEXT PRIMARY KEY,
+    course_id TEXT NOT NULL REFERENCES aegis_academy_courses(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    assessment_type TEXT NOT NULL CHECK(assessment_type IN ('quiz', 'exercise', 'project')),
+    score FLOAT NOT NULL CHECK(score BETWEEN 0 AND 100),
+    passed BOOLEAN NOT NULL,
+    evidence_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aegis_academy_assessments_course
+ON aegis_academy_assessments(course_id, created_at);
+
+CREATE TABLE IF NOT EXISTS aegis_containment_drills (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES aegis_agent_registry(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK(status IN ('running', 'passed', 'failed')),
+    report_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    completed_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS aegis_learning_memory (
@@ -601,12 +650,16 @@ class DatabaseSetup:
             "aegis_world_pulse_sources",
             "aegis_world_pulse_source_candidates",
             "aegis_world_pulse_schedules",
+            "aegis_opportunity_cycles",
             "aegis_research_reports",
             "aegis_opportunities",
             "aegis_solutions",
             "aegis_activity",
             "aegis_data_jobs",
             "aegis_academy_courses",
+            "aegis_academy_materials",
+            "aegis_academy_assessments",
+            "aegis_containment_drills",
             "aegis_learning_memory",
         }
         missing = required - tables

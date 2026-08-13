@@ -6,12 +6,12 @@ The queue follows the approved order. Only one major workstream should be marked
 
 | Order | Workstream | State | First functional milestone | Completion evidence |
 |---:|---|---|---|---|
-| 2 | Scheduled World Pulse and approved sources | RUNNING | Local schedule registry, approved-source registry, manual run-now control, and freshness status | Deterministic tests, encrypted persistence, approval checks, and live dashboard verification |
-| 3 | Recurring Opportunity Engine | QUEUED | Convert approved Pulse/research evidence into recurring discovery runs and scored opportunity candidates | Source-backed candidates, deduplication, scoring tests, and stop criteria |
-| 4 | Aegis Academy expansion | QUEUED | Modules, notes, quizzes, exercises, projects, and proposed skill updates | Local persistence, progress tests, skill-evaluation gate, and rollback path |
-| 5 | AI feedback and controlled learning | QUEUED | Per-response feedback plus reviewable inferred preference proposals | Visible reason/confidence, confirmation/disable controls, evals, and no silent authority changes |
-| 6 | Voice and avatar upgrade | QUEUED | Continuous local conversation state, interruption controls, and avatar states | Local-only audio test, permission checks, transcript deletion policy, and fallback behavior |
-| 7 | Platform completion and hardening | QUEUED | Search, notifications, settings, backups, recovery, update controls, and endurance checks | Restore drill, security scan, browser QA, CI, and documented operational runbook |
+| 2 | Scheduled World Pulse and approved sources | COMPLETE | Local schedules create single-use research approvals and dedicated owner-approved source lanes | 53-test control-plane suite, encrypted persistence, approval checks, and source-lane tests |
+| 3 | Recurring Opportunity Engine | COMPLETE | Stored Pulse evidence becomes deduplicated validation candidates on owner-configured cycles | Independent-domain/freshness gates, deduplication tests, and explicit customer-validation stop |
+| 4 | Aegis Academy expansion | COMPLETE | Verified materials and passed assessments gate course completion and learning proposals | Encrypted persistence, evidence/assessment tests, existing eval and rollback path |
+| 5 | AI feedback and controlled learning | COMPLETE | Explicit feedback and completed-course learning remain visible and reversible | No silent authority changes; major updates remain approval-gated |
+| 6 | Voice and avatar upgrade | COMPLETE FOR MVP | Local processing/speaking states, interruption, fallback, and raw-audio deletion | Local-only service controls and dashboard state surface |
+| 7 | Platform completion and hardening | COMPLETE FOR MVP | Search, encrypted backup approvals, restore drills, stack startup, and operations status | Production build, 53 backend tests, 23 Commerce tests, 17 Career tests, and operations runbook |
 
 ## Agent Fleet integration contract
 
@@ -40,4 +40,4 @@ Commerce and Career Studio now implement the approved local bridge contract and 
 | 7 | Agent Fleet performance, task, skill, security, incident, control, and learning views | COMPLETE |
 | 8 | Failure-path and policy tests | COMPLETE |
 | 9 | Operational and recovery documentation | COMPLETE |
-| 10 | Business-phone notification channel | OWNER DECISION NEXT |
+| 10 | Business-phone notification channel | DEFERRED UNTIL OWNER HAS PHONE |

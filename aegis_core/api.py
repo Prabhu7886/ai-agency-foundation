@@ -22,17 +22,22 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from aegis_core.foundation import FoundationGuard, FoundationViolation
 from aegis_core.agent_fleet import AgentFleetService
+from aegis_core.academy import AcademyService
 from aegis_core.codex_adapter import CodexAppServerAdapter
 from aegis_core.data_lab import DataLabService
 from aegis_core.github_adapter import GitHubAdapter
 from aegis_core.model_gateway import LocalModelGateway
 from aegis_core.model_router import LocalModelRouter
 from aegis_core.opportunity_reports import OpportunityReportService
+from aegis_core.opportunity_engine import OpportunityEngineService
+from aegis_core.operations import OperationsService
 from aegis_core.prompt_compiler import PromptCompiler
 from aegis_core.research import WebResearchService
 from aegis_core.schemas import (
     AcademyCourseCreate,
     AcademyCourseUpdate,
+    AcademyMaterialCreate,
+    AcademyAssessmentCreate,
     AgentControlRequest,
     AgentCreate,
     AgentLearningRollbackRequest,
@@ -47,6 +52,8 @@ from aegis_core.schemas import (
     LearningMemoryDecision,
     PluginChange,
     OpportunityCreate,
+    OpportunityCycleCreate,
+    OpportunityCycleUpdate,
     ProjectCreate,
     PromptCompileRequest,
     ResearchRequest,
@@ -62,6 +69,7 @@ from aegis_core.schemas import (
     TaskUpdate,
     VoiceSpeakRequest,
     WorldPulseScheduleCreate,
+    WorldPulseScheduleUpdate,
     WorldPulseSourceCandidateCreate,
 )
 from aegis_core.security_sentinel import SecuritySentinelService
@@ -122,6 +130,9 @@ def create_app(
     data_lab = DataLabService(guard)
     voice = LocalVoiceService()
     agent_fleet = AgentFleetService(store)
+    academy = AcademyService(store)
+    opportunity_engine = OpportunityEngineService(store)
+    operations = OperationsService()
     session_token = secrets.token_urlsafe(32)
 
     monitor_stop = asyncio.Event()
@@ -139,21 +150,84 @@ def create_app(
             except asyncio.TimeoutError:
                 continue
 
+    async def monitor_scheduled_intelligence() -> None:
+        while not monitor_stop.is_set():
+            try:
+                pending = [item for item in store.list_approvals() if item["status"] == "pending"]
+                pending_schedule_ids = {
+                    str(item.get("evidence", {}).get("schedule_id"))
+                    for item in pending
+                    if item.get("action") == "public_web_research"
+                }
+                foundation = store.get_project("project-foundation")
+                for schedule in store.due_world_pulse_schedules():
+                    if schedule["id"] in pending_schedule_ids:
+                        continue
+                    clean = guard.sanitize_public_query(schedule["query"])
+                    task_id = None
+                    if foundation:
+                        task = store.create_task(
+                            foundation["id"],
+                            f"Scheduled Pulse: {schedule['name']}",
+                            clean,
+                            "medium",
+                            "Aegis",
+                            "awaiting_approval",
+                        )
+                        task_id = task["id"]
+                    store.create_approval(
+                        action="public_web_research",
+                        summary=f"Scheduled World Pulse research: {schedule['name']}",
+                        risk_level="medium",
+                        project_id=foundation["id"] if foundation else None,
+                        task_id=task_id,
+                        evidence={
+                            "query": clean,
+                            "depth": "standard",
+                            "category": schedule["niche"],
+                            "regions": ["Global"],
+                            "purpose": "world_pulse",
+                            "private_data_blocked": True,
+                            "schedule_id": schedule["id"],
+                            "approved_sources": [
+                                {
+                                    "label": item["label"],
+                                    "source_type": item["source_type"],
+                                    "locator": item["locator"],
+                                }
+                                for item in store.list_world_pulse_source_candidates()
+                                if item["status"] == "approved" and item["niche"] == schedule["niche"]
+                            ][:20],
+                        },
+                        approval_queue="security_operations",
+                    )
+                    store.mark_world_pulse_schedule_requested(schedule["id"])
+                await asyncio.to_thread(opportunity_engine.run_due)
+            except Exception:
+                # Schedules are proposal generators only. A failure must not stop the API
+                # or bypass the owner approval required for every public research run.
+                pass
+            try:
+                await asyncio.wait_for(monitor_stop.wait(), timeout=60)
+            except asyncio.TimeoutError:
+                continue
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         store.initialize()
         store.ensure_foundation_project(root, "https://github.com/Prabhu7886/ai-agency-foundation")
         monitor_task = asyncio.create_task(monitor_independent_agents())
+        intelligence_task = asyncio.create_task(monitor_scheduled_intelligence())
         try:
             yield
         finally:
             monitor_stop.set()
-            await monitor_task
+            await asyncio.gather(monitor_task, intelligence_task)
             codex.close()
 
     app = FastAPI(
         title="Aegis Local Executive API",
-        version="0.8.0",
+        version="0.9.0",
         description="Local-first executive control plane built on the AI Agency security foundation.",
         lifespan=lifespan,
         docs_url="/api/docs" if os.getenv("AEGIS_ENABLE_API_DOCS", "false").lower() == "true" else None,
@@ -201,7 +275,7 @@ def create_app(
         codex_plugin = plugins.get("plugin-codex", {})
         local_status = await asyncio.to_thread(model_router.status)
         return {
-            "version": "0.8.0",
+            "version": "0.9.0",
             "workspaces": [item["label"] for item in WORKSPACES],
             "overview": store.overview(),
             "agents": [
@@ -324,11 +398,15 @@ def create_app(
             "world_pulse": store.list_world_pulse(),
             "world_pulse_sources": store.list_world_pulse_source_candidates(),
             "world_pulse_schedules": store.list_world_pulse_schedules(),
+            "opportunity_cycles": store.list_opportunity_cycles(),
             "research_reports": store.list_research_reports(),
             "opportunities": store.list_opportunities(),
             "solutions": store.list_solutions(),
             "academy_courses": store.list_academy_courses(),
+            "containment_drills": store.list_containment_drills(),
             "learning_memory": store.list_learning_memory(),
+            "operations": operations.status(),
+            "voice": voice.status(),
             "activity": store.list_activity(),
             "foundation": guard.status(),
             "local_model": model_router.status(),
@@ -405,6 +483,15 @@ def create_app(
     async def poll_fleet() -> dict[str, Any]:
         results = await asyncio.to_thread(agent_fleet.poll_all)
         return {"polled_at": datetime.now(timezone.utc).isoformat(), "results": results}
+
+    @app.post("/api/fleet/agents/{agent_id}/containment-drill", dependencies=[Depends(require_session)])
+    async def run_fleet_containment_drill(agent_id: str) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(agent_fleet.run_containment_drill, agent_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/fleet/agents/{agent_id}/control", dependencies=[Depends(require_session)])
     async def control_fleet_agent(agent_id: str, payload: AgentControlRequest) -> dict[str, Any]:
@@ -968,7 +1055,16 @@ def create_app(
 
     @app.post("/api/world-pulse/schedules", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_session)])
     async def create_world_pulse_schedule(payload: WorldPulseScheduleCreate) -> dict[str, Any]:
-        return store.create_world_pulse_schedule(payload.model_dump())
+        values = payload.model_dump()
+        values["query"] = guard.sanitize_public_query(values["query"])
+        return store.create_world_pulse_schedule(values)
+
+    @app.patch("/api/world-pulse/schedules/{schedule_id}", dependencies=[Depends(require_session)])
+    async def update_world_pulse_schedule(schedule_id: str, payload: WorldPulseScheduleUpdate) -> dict[str, Any]:
+        try:
+            return store.set_world_pulse_schedule_status(schedule_id, payload.status)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post("/api/research/requests/{approval_id}/execute", dependencies=[Depends(require_session)])
     async def execute_research(approval_id: str) -> dict[str, Any]:
@@ -995,6 +1091,7 @@ def create_app(
                 evidence.get("query", ""),
                 evidence.get("depth", "standard"),
                 approved_session=True,
+                approved_sources=evidence.get("approved_sources", []),
             )
         except FoundationViolation as exc:
             fail_task(exc)
@@ -1222,6 +1319,10 @@ def create_app(
     async def speak_voice(payload: VoiceSpeakRequest) -> dict[str, Any]:
         return await asyncio.to_thread(voice.speak, payload.text)
 
+    @app.post("/api/voice/interrupt", dependencies=[Depends(require_session)])
+    async def interrupt_voice() -> dict[str, Any]:
+        return voice.interrupt()
+
     @app.post("/api/academy/courses", dependencies=[Depends(require_session)])
     async def create_academy_course(payload: AcademyCourseCreate) -> dict[str, Any]:
         return store.create_academy_course(payload.model_dump())
@@ -1230,6 +1331,24 @@ def create_app(
     async def update_academy_course(course_id: str, payload: AcademyCourseUpdate) -> dict[str, Any]:
         try:
             return store.update_academy_course(course_id, payload.status, payload.progress)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/academy/courses/{course_id}/materials", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_session)])
+    async def add_academy_material(course_id: str, payload: AcademyMaterialCreate) -> dict[str, Any]:
+        try:
+            return academy.add_material(course_id, payload.model_dump())
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/academy/courses/{course_id}/assessments", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_session)])
+    async def add_academy_assessment(course_id: str, payload: AcademyAssessmentCreate) -> dict[str, Any]:
+        try:
+            return store.add_academy_assessment(course_id, payload.model_dump())
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -1247,6 +1366,81 @@ def create_app(
     @app.post("/api/opportunities", dependencies=[Depends(require_session)])
     async def create_opportunity(payload: OpportunityCreate) -> dict[str, Any]:
         return store.create_opportunity(payload.model_dump())
+
+    @app.post("/api/opportunity-cycles", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_session)])
+    async def create_opportunity_cycle(payload: OpportunityCycleCreate) -> dict[str, Any]:
+        values = payload.model_dump()
+        values["query"] = guard.sanitize_public_query(values["query"])
+        return store.create_opportunity_cycle(values)
+
+    @app.patch("/api/opportunity-cycles/{cycle_id}", dependencies=[Depends(require_session)])
+    async def update_opportunity_cycle(cycle_id: str, payload: OpportunityCycleUpdate) -> dict[str, Any]:
+        try:
+            return store.set_opportunity_cycle_status(cycle_id, payload.status)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/opportunity-cycles/{cycle_id}/run", dependencies=[Depends(require_session)])
+    async def run_opportunity_cycle(cycle_id: str) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(opportunity_engine.run_cycle, cycle_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/search", dependencies=[Depends(require_session)])
+    async def search_workspace(q: str = "") -> dict[str, Any]:
+        return {"query": q, "results": store.search(q)}
+
+    @app.get("/api/operations/status", dependencies=[Depends(require_session)])
+    async def operations_status() -> dict[str, Any]:
+        return operations.status()
+
+    @app.post("/api/operations/backups", dependencies=[Depends(require_session)])
+    async def request_encrypted_backup() -> dict[str, Any]:
+        return store.create_approval(
+            "encrypted_backup",
+            "Create and verify an encrypted Aegis backup",
+            "medium",
+            evidence={"encrypted": True, "includes": ["sqlcipher", "vector_store", "non_secret_configuration"], "retention": 14},
+            approval_queue="security_operations",
+        )
+
+    @app.post("/api/operations/backups/{approval_id}/execute", dependencies=[Depends(require_session)])
+    async def execute_encrypted_backup(approval_id: str) -> dict[str, Any]:
+        claim_approved_action(approval_id, "encrypted_backup")
+        try:
+            result = await asyncio.to_thread(operations.create_backup)
+            complete_approved_action(approval_id, "Encrypted backup created and verified")
+            return result
+        except Exception as exc:
+            fail_approved_action(approval_id, exc)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/operations/restore-drill", dependencies=[Depends(require_session)])
+    async def request_restore_drill() -> dict[str, Any]:
+        return store.create_approval(
+            "restore_drill",
+            "Decrypt the latest backup temporarily and verify every manifest hash",
+            "medium",
+            evidence={"non_destructive": True, "temporary_copy_deleted": True, "production_data_changed": False},
+            approval_queue="security_operations",
+        )
+
+    @app.post("/api/operations/restore-drill/{approval_id}/execute", dependencies=[Depends(require_session)])
+    async def execute_restore_drill(approval_id: str) -> dict[str, Any]:
+        claim_approved_action(approval_id, "restore_drill")
+        try:
+            result = await asyncio.to_thread(operations.restore_drill)
+            complete_approved_action(approval_id, "Non-destructive restore drill completed")
+            return result
+        except FileNotFoundError as exc:
+            fail_approved_action(approval_id, exc)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            fail_approved_action(approval_id, exc)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/solutions", dependencies=[Depends(require_session)])
     async def create_solution(payload: SolutionCreate) -> dict[str, Any]:

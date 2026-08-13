@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from pathlib import Path
 
@@ -14,6 +15,9 @@ from aegis_core.github_adapter import GitHubAdapter
 from aegis_core.model_gateway import LocalModelGateway
 from aegis_core.model_router import LocalModelRouter
 from aegis_core.opportunity_reports import OpportunityReportService
+from aegis_core.opportunity_engine import OpportunityEngineService
+from aegis_core.operations import OperationsService
+from aegis_core.academy import AcademyService
 from aegis_core.prompt_compiler import PromptCompiler
 from aegis_core.research import WebResearchService
 from aegis_core.schemas import ChatRequest
@@ -557,6 +561,80 @@ def test_approved_public_research_is_narrowly_allowed_offline(
     assert result["research_lanes"]["primary"]["accepted"] == 1
 
 
+def test_public_research_uses_only_valid_owner_approved_source_lanes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "security.yaml").write_text(
+        yaml.safe_dump({"version": 1, "data_handling": {"approved_public_research_sessions": True}}),
+        encoding="utf-8",
+    )
+    (config / "models.yaml").write_text(yaml.safe_dump({"defaults": {"offline_mode": True}}), encoding="utf-8")
+    monkeypatch.setenv("AI_AGENCY_HOME", str(tmp_path))
+    monkeypatch.setenv("AI_AGENCY_OFFLINE_MODE", "true")
+    calls: list[str] = []
+
+    class FakeSearch:
+        def __enter__(self) -> "FakeSearch":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def text(self, query: str, max_results: int) -> list[dict[str, str]]:
+            calls.append(query)
+            return [{"title": query, "href": f"https://source{len(calls)}.example/report", "body": "Evidence"}]
+
+    monkeypatch.setattr("aegis_core.research.DDGS", FakeSearch)
+    result = WebResearchService(FoundationGuard()).search(
+        "AI policy update",
+        "quick",
+        approved_session=True,
+        verify_pages=False,
+        approved_sources=[
+            {"label": "Official AI Office", "source_type": "publisher", "locator": "https://ai.gov.example/news"},
+            {"label": "Verified public account", "source_type": "public_account", "locator": "@OfficialAI"},
+            {"label": "Blocked local", "source_type": "publisher", "locator": "https://localhost/private"},
+            {"label": "Invalid free text", "source_type": "publisher", "locator": "not a URL"},
+        ],
+    )
+    assert calls[0].endswith("site:ai.gov.example")
+    assert calls[1].endswith('"@OfficialAI"')
+    assert result["approved_source_monitoring"]["configured"] == 2
+    assert result["research_lanes"]["approved_sources"]["accepted"] == 2
+
+
+def test_restore_drill_verifies_hashes_and_removes_temporary_copy(store: AegisStore) -> None:
+    class FakeBackups:
+        @staticmethod
+        def restore_to(_source: Path, destination: Path, _timestamp: str) -> Path:
+            content = b"encrypted SQLCipher snapshot fixture"
+            (destination / "metrics.db").write_bytes(content)
+            (destination / "manifest.json").write_text(
+                json.dumps({
+                    "files": [{
+                        "path": "metrics.db",
+                        "sha256": hashlib.sha256(content).hexdigest(),
+                    }]
+                }),
+                encoding="utf-8",
+            )
+            return destination
+
+    operations = OperationsService(backups=FakeBackups())  # type: ignore[arg-type]
+    artifact = operations.paths["backups"] / "ai-agency-20260812T120000Z.zip.enc"
+    artifact.write_bytes(b"authenticated encrypted fixture")
+
+    result = operations.restore_drill(artifact.name)
+
+    assert result["status"] == "passed"
+    assert result["files_verified"] == 1
+    assert result["production_data_changed"] is False
+    assert not list(operations.paths["runtime"].glob("aegis-restore-drill-*"))
+
+
 def test_full_page_verification_extracts_bounded_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     config = tmp_path / "config"
     config.mkdir()
@@ -796,3 +874,60 @@ def test_academy_and_controlled_learning_are_local_and_reviewable(store: AegisSt
     assert explicit["status"] == "confirmed"
     assert inferred["status"] == "proposed"
     assert store.set_learning_memory_status(inferred["id"], "disabled")["status"] == "disabled"
+
+
+def test_academy_completion_requires_material_and_passed_assessment(store: AegisStore) -> None:
+    course = store.create_academy_course({"title": "Evidence Course", "provider": "Owner", "learning_goal": "Use reliable sources"})
+    with pytest.raises(ValueError, match="verified material"):
+        store.update_academy_course(course["id"], "completed", 100)
+    AcademyService(store).add_material(course["id"], {
+        "module_title": "Source evaluation",
+        "content": "A bounded owner-attested module covering source authority, freshness, corroboration, and limitations.",
+        "owner_attested": True,
+        "source_url": None,
+    })
+    store.add_academy_assessment(course["id"], {
+        "title": "Evidence exercise",
+        "assessment_type": "exercise",
+        "score": 88,
+        "evidence": {"reviewed": True},
+    })
+    completed = store.update_academy_course(course["id"], "completed", 100)
+    assert completed["completion_ready"] is True
+    assert completed["materials"][0]["verification_state"] == "owner_attested"
+    assert completed["assessments"][0]["passed"] is True
+
+
+def test_world_pulse_schedule_due_and_pause(store: AegisStore) -> None:
+    schedule = store.create_world_pulse_schedule({"name": "AI weekly", "niche": "ai-technology", "query": "AI agents", "cadence_hours": 24})
+    assert [item["id"] for item in store.due_world_pulse_schedules()] == [schedule["id"]]
+    store.mark_world_pulse_schedule_requested(schedule["id"])
+    assert store.due_world_pulse_schedules() == []
+    assert store.set_world_pulse_schedule_status(schedule["id"], "paused")["status"] == "paused"
+
+
+def test_recurring_opportunity_cycle_requires_independent_domains(store: AegisStore) -> None:
+    cycle = store.create_opportunity_cycle({
+        "name": "AI workflow gap",
+        "niche": "ai-technology",
+        "query": "AI workflow automation",
+        "allocation": "explore-20",
+        "cadence_hours": 168,
+    })
+    first = store.add_world_pulse(
+        region="Global", category="ai-technology", headline="AI workflow demand grows", summary="Teams report workflow gaps.",
+        confidence=0.7, published_at=None,
+        source={"url": "https://example-one.com/a", "domain": "example-one.com", "publisher": "One", "source_tier": "other", "verification_state": "single_source", "retrieved_at": "2026-08-12T12:00:00+00:00"},
+    )
+    assert first["domain"] == "example-one.com"
+    insufficient = OpportunityEngineService(store).run_cycle(cycle["id"])
+    assert insufficient["status"] == "insufficient_evidence"
+    store.add_world_pulse(
+        region="Global", category="ai-technology", headline="Automation buyers seek local AI", summary="Small teams want private AI workflows.",
+        confidence=0.75, published_at=None,
+        source={"url": "https://example-two.org/b", "domain": "example-two.org", "publisher": "Two", "source_tier": "other", "verification_state": "single_source", "retrieved_at": "2026-08-12T12:00:00+00:00"},
+    )
+    result = OpportunityEngineService(store).run_cycle(cycle["id"])
+    assert result["status"] == "candidate_created"
+    assert result["required_next_gate"] == "owner_review_and_customer_validation"
+    assert OpportunityEngineService(store).run_cycle(cycle["id"])["status"] == "duplicate"

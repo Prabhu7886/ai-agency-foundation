@@ -165,6 +165,10 @@ export function createWorldPulseSchedule(payload: Record<string, unknown>): Prom
   return request("/api/world-pulse/schedules", { method: "POST", body: JSON.stringify(payload) });
 }
 
+export function updateWorldPulseSchedule(scheduleId: string, status: "planned" | "paused"): Promise<Record<string, unknown>> {
+  return request(`/api/world-pulse/schedules/${scheduleId}`, { method: "PATCH", body: JSON.stringify({ status }) });
+}
+
 export function executeResearch(approvalId: string): Promise<Record<string, unknown>> {
   return request(`/api/research/requests/${approvalId}/execute`, { method: "POST" });
 }
@@ -218,6 +222,18 @@ export function createOpportunity(payload: Record<string, unknown>): Promise<Rec
   return request("/api/opportunities", { method: "POST", body: JSON.stringify(payload) });
 }
 
+export function createOpportunityCycle(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return request("/api/opportunity-cycles", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function updateOpportunityCycle(cycleId: string, status: "active" | "paused"): Promise<Record<string, unknown>> {
+  return request(`/api/opportunity-cycles/${cycleId}`, { method: "PATCH", body: JSON.stringify({ status }) });
+}
+
+export function runOpportunityCycle(cycleId: string): Promise<Record<string, unknown>> {
+  return request(`/api/opportunity-cycles/${cycleId}/run`, { method: "POST" });
+}
+
 export function createSolution(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   return request("/api/solutions", { method: "POST", body: JSON.stringify(payload) });
 }
@@ -246,6 +262,14 @@ export function updateAcademyCourse(courseId: string, status: string, progress: 
   return request(`/api/academy/courses/${courseId}`, { method: "PATCH", body: JSON.stringify({ status, progress }) });
 }
 
+export function addAcademyMaterial(courseId: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return request(`/api/academy/courses/${courseId}/materials`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function addAcademyAssessment(courseId: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return request(`/api/academy/courses/${courseId}/assessments`, { method: "POST", body: JSON.stringify(payload) });
+}
+
 export function createLearningMemory(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   return request("/api/learning/memory", { method: "POST", body: JSON.stringify(payload) });
 }
@@ -262,8 +286,20 @@ export function speakVoice(text: string): Promise<Record<string, unknown>> {
   return request("/api/voice/speak", { method: "POST", body: JSON.stringify({ text }) });
 }
 
+export function getVoiceStatus(): Promise<Record<string, unknown>> {
+  return request("/api/voice/status");
+}
+
+export function interruptVoice(): Promise<Record<string, unknown>> {
+  return request("/api/voice/interrupt", { method: "POST" });
+}
+
 export function pollAgentFleet(): Promise<Record<string, unknown>> {
   return request("/api/fleet/poll", { method: "POST" });
+}
+
+export function runContainmentDrill(agentId: string): Promise<Record<string, unknown>> {
+  return request(`/api/fleet/agents/${agentId}/containment-drill`, { method: "POST" });
 }
 
 export function controlFleetAgent(
@@ -303,4 +339,24 @@ export function executeFleetLearningRollback(approvalId: string): Promise<Record
 
 export function resolveFleetIncident(incidentId: string): Promise<Record<string, unknown>> {
   return request(`/api/fleet/incidents/${incidentId}/resolve`, { method: "POST" });
+}
+
+export function requestEncryptedBackup(): Promise<Record<string, unknown>> {
+  return request("/api/operations/backups", { method: "POST" });
+}
+
+export function executeEncryptedBackup(approvalId: string): Promise<Record<string, unknown>> {
+  return request(`/api/operations/backups/${approvalId}/execute`, { method: "POST" });
+}
+
+export function requestRestoreDrill(): Promise<Record<string, unknown>> {
+  return request("/api/operations/restore-drill", { method: "POST" });
+}
+
+export function executeRestoreDrill(approvalId: string): Promise<Record<string, unknown>> {
+  return request(`/api/operations/restore-drill/${approvalId}/execute`, { method: "POST" });
+}
+
+export function searchWorkspace(query: string): Promise<{ query: string; results: Array<Record<string, unknown>> }> {
+  return request(`/api/search?q=${encodeURIComponent(query)}`);
 }

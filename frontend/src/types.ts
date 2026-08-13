@@ -104,6 +104,10 @@ export type IndependentAgent = Agent & {
       tasks_total?: number;
       tasks_by_status?: Record<string, number>;
       failure_rate?: number;
+      success_rate?: number;
+      average_duration_ms?: number;
+      last_success_at?: string | null;
+      last_failure_at?: string | null;
       domain?: Record<string, number>;
       resources?: { cpu_percent?: number; memory_percent?: number; rss_mb?: number };
     };
@@ -211,6 +215,9 @@ export type WorldPulseItem = {
   domain?: string | null;
   confidence: number;
   verification_state: string;
+  published_at?: string | null;
+  collected_at?: string;
+  retrieved_at?: string;
 };
 export type AcademyCourse = {
   id: string;
@@ -221,6 +228,9 @@ export type AcademyCourse = {
   progress: number;
   learning_goal: string;
   updated_at: string;
+  completion_ready: boolean;
+  materials: Array<{ id: string; module_title: string; source_url?: string | null; content_sha256: string; verification_state: string; created_at: string }>;
+  assessments: Array<{ id: string; title: string; assessment_type: string; score: number; passed: boolean; evidence: Record<string, unknown>; created_at: string }>;
 };
 export type LearningMemory = {
   id: string;
@@ -252,6 +262,24 @@ export type WorldPulseSchedule = {
   execution_policy: "approval_each_run";
   status: "planned" | "paused";
   last_requested_at?: string | null;
+};
+export type OpportunityCycle = {
+  id: string;
+  name: string;
+  niche: string;
+  query: string;
+  allocation: "existing-80" | "explore-20";
+  cadence_hours: number;
+  status: "active" | "paused";
+  last_run_at?: string | null;
+};
+export type ContainmentDrill = {
+  id: string;
+  agent_id: string;
+  status: "running" | "passed" | "failed";
+  report: Record<string, unknown>;
+  created_at: string;
+  completed_at?: string | null;
 };
 export type ResearchReport = {
   id: string;
@@ -369,11 +397,30 @@ export type Bootstrap = {
   world_pulse: WorldPulseItem[];
   world_pulse_sources: WorldPulseSourceCandidate[];
   world_pulse_schedules: WorldPulseSchedule[];
+  opportunity_cycles: OpportunityCycle[];
   research_reports: ResearchReport[];
   opportunities: Array<Record<string, unknown>>;
   solutions: Array<Record<string, unknown>>;
   academy_courses: AcademyCourse[];
+  containment_drills: ContainmentDrill[];
   learning_memory: LearningMemory[];
+  operations: {
+    backup_count: number;
+    latest_backup?: string | null;
+    latest_backup_bytes: number;
+    encrypted_only: boolean;
+    restore_policy: string;
+    production_restore: string;
+    startup_launcher: string;
+  };
+  voice: {
+    transcription_available: boolean;
+    speech_available: boolean;
+    session_state: string;
+    interrupt_available: boolean;
+    raw_audio_retention: string;
+    transcript_retention: string;
+  };
   activity: Activity[];
   foundation: Record<string, unknown>;
   local_model: {

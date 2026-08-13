@@ -49,6 +49,23 @@ def test_bridge_state_encrypts_containment_and_learning(monkeypatch: pytest.Monk
     assert content not in state.active_learning_context()
 
 
+def test_bridge_records_sanitized_task_telemetry_and_runs_isolated_drill(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AI_AGENCY_HOME", str(tmp_path))
+    monkeypatch.setenv("AI_AGENCY_MASTER_KEY", base64.urlsafe_b64encode(b"c" * 32).decode())
+    state = FleetBridgeState("career-test", tmp_path / "bridge.enc")
+    state.record_task_start("task 123", "resume.tailor")
+    state.record_task_finish("task 123", "completed", 245, 0)
+    record = state.task_records()[0]
+    assert record["task_id"] == "task_123"
+    assert record["duration_ms"] == 245
+    assert record["status"] == "completed"
+    drill = state.run_containment_drill()
+    assert drill["status"] == "passed"
+    assert drill["blocked_while_paused"] is True
+    assert drill["restored_after_drill"] is True
+    assert drill["business_capabilities_touched"] is False
+
+
 def test_store_records_redacted_fleet_snapshot_and_incident(fleet_store: AegisStore) -> None:
     snapshot = {
         "contract_version": "1.0",

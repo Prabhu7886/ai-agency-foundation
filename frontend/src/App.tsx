@@ -51,11 +51,15 @@ import {
   chat,
   createAgent,
   createAcademyCourse,
+  addAcademyMaterial,
+  addAcademyAssessment,
   createLearningMemory,
   createOpportunity,
+  createOpportunityCycle,
   createProject,
   createSolution,
   createWorldPulseSchedule,
+  updateWorldPulseSchedule,
   createSkill,
   deleteConversation,
   decideApproval,
@@ -83,10 +87,20 @@ import {
   restoreConversation,
   runSecurityScan,
   pollAgentFleet,
+  runContainmentDrill,
   resolveFleetIncident,
   updateAcademyCourse,
+  updateOpportunityCycle,
+  runOpportunityCycle,
   decideLearningMemory,
   speakVoice,
+  getVoiceStatus,
+  interruptVoice,
+  requestEncryptedBackup,
+  executeEncryptedBackup,
+  requestRestoreDrill,
+  executeRestoreDrill,
+  searchWorkspace,
   streamChat,
   transcribeVoice,
 } from "./api";
@@ -147,6 +161,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [codexLogin, setCodexLogin] = useState<{ verificationUrl: string; userCode: string } | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   const refresh = async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -223,6 +238,12 @@ export default function App() {
       }
       if (decision === "approved" && item.action === "agent_learning_rollback") {
         return executeFleetLearningRollback(item.id);
+      }
+      if (decision === "approved" && item.action === "encrypted_backup") {
+        return executeEncryptedBackup(item.id);
+      }
+      if (decision === "approved" && item.action === "restore_drill") {
+        return executeRestoreDrill(item.id);
       }
       return undefined;
     }, decision === "approved" && item.action === "public_web_research"
@@ -323,7 +344,7 @@ export default function App() {
           </div>
           <div className="topbar__actions">
             <StatusPill tone="safe"><LockKeyhole size={12} /> Local only</StatusPill>
-            <button className="icon-button" title="Search this workspace"><Search size={17} /></button>
+            <button className="icon-button" title="Search this workspace" onClick={() => setSearchOpen(true)}><Search size={17} /></button>
             <button className="icon-button" title="Workspace settings"><Settings2 size={17} /></button>
           </div>
         </header>
@@ -358,18 +379,19 @@ export default function App() {
               onLearning={(payload) => mutate(() => createFleetLearning(payload), "Learning update evaluated and recorded")}
               onRollback={(updateId) => mutate(() => requestFleetLearningRollback(updateId, "Owner requested rollback from Agent Fleet"), "Learning rollback sent to Approval Center")}
               onResolve={(incidentId) => mutate(() => resolveFleetIncident(incidentId), "Incident marked resolved")}
+              onDrill={(agentId) => mutate(() => runContainmentDrill(agentId), "Safe containment drill completed")}
             />
           )}
           {activeWorkspace === "world-pulse" && (
-            <WorldPulse data={data} project={selectedProject} onResearch={(query, category, scheduleId) => mutate(() => requestResearch(selectedProject?.id ?? null, query, "world_pulse", category, scheduleId), "Research request sent to Approval Center")} onCreateSource={(payload) => mutate(() => proposeWorldPulseSource(payload), "Source proposal sent to Security & Operations approvals")} onCreateSchedule={(payload) => mutate(() => createWorldPulseSchedule(payload), "Approval-gated research schedule saved")} />
+            <WorldPulse data={data} project={selectedProject} onResearch={(query, category, scheduleId) => mutate(() => requestResearch(selectedProject?.id ?? null, query, "world_pulse", category, scheduleId), "Research request sent to Approval Center")} onCreateSource={(payload) => mutate(() => proposeWorldPulseSource(payload), "Source proposal sent to Security & Operations approvals")} onCreateSchedule={(payload) => mutate(() => createWorldPulseSchedule(payload), "Approval-gated research schedule saved")} onUpdateSchedule={(id, next) => mutate(() => updateWorldPulseSchedule(id, next), `World Pulse schedule ${next === "paused" ? "paused" : "activated"}`)} />
           )}
-          {activeWorkspace === "opportunity-engine" && <OpportunityEngine data={data} project={selectedProject} onResearch={(query) => mutate(() => requestResearch(selectedProject?.id ?? null, query, "opportunity"), "Opportunity research sent to Approval Center")} onCreate={(payload) => mutate(() => createOpportunity(payload), "Opportunity scored from explicit evidence")} onSendToFactory={(payload) => mutate(() => createSolution(payload), "Opportunity sent to Solution Factory")} />}
+          {activeWorkspace === "opportunity-engine" && <OpportunityEngine data={data} project={selectedProject} onResearch={(query) => mutate(() => requestResearch(selectedProject?.id ?? null, query, "opportunity"), "Opportunity research sent to Approval Center")} onCreate={(payload) => mutate(() => createOpportunity(payload), "Opportunity scored from explicit evidence")} onSendToFactory={(payload) => mutate(() => createSolution(payload), "Opportunity sent to Solution Factory")} onCreateCycle={(payload) => mutate(() => createOpportunityCycle(payload), "Recurring opportunity cycle activated")} onUpdateCycle={(id, next) => mutate(() => updateOpportunityCycle(id, next), `Opportunity cycle ${next}`)} onRunCycle={(id) => mutate(() => runOpportunityCycle(id), "Local opportunity discovery cycle completed")} />}
           {activeWorkspace === "solution-factory" && <><SolutionCreateForm onCreate={(payload) => mutate(() => createSolution(payload), "Solution program created at discovery stage")} /><SolutionFactory data={data} onTransition={(id, stage, proof) => mutate(() => requestSolutionTransition(id, stage, proof), "Stage transition sent to Business & Creative approvals")} /></>}
           {activeWorkspace === "approval-center" && (
             <ApprovalCenter approvals={data.approvals} onDecision={decideAndExecute} />
           )}
-          {activeWorkspace === "security-sentinel" && <SecuritySentinel data={data} project={selectedProject} />}
-          {activeWorkspace === "aegis-hub" && <AegisHub data={data} onCreateCourse={(payload) => mutate(() => createAcademyCourse(payload), "Course added to Aegis Academy")} onUpdateCourse={(id, status, progress) => mutate(() => updateAcademyCourse(id, status, progress), "Learning progress updated")} onCreateMemory={(payload) => mutate(() => createLearningMemory(payload), "Preference saved under controlled learning")} onMemoryDecision={(id, status) => mutate(() => decideLearningMemory(id, status), "Learning preference updated")} />}
+          {activeWorkspace === "security-sentinel" && <SecuritySentinel data={data} project={selectedProject} onBackup={() => mutate(() => requestEncryptedBackup(), "Encrypted backup sent to Security & Operations approvals")} onRestore={() => mutate(() => requestRestoreDrill(), "Restore drill sent to Security & Operations approvals")} />}
+          {activeWorkspace === "aegis-hub" && <AegisHub data={data} onCreateCourse={(payload) => mutate(() => createAcademyCourse(payload), "Course added to Aegis Academy")} onUpdateCourse={(id, status, progress) => mutate(() => updateAcademyCourse(id, status, progress), "Learning progress updated")} onAddMaterial={(id, payload) => mutate(() => addAcademyMaterial(id, payload), "Verified learning material added")} onAddAssessment={(id, payload) => mutate(() => addAcademyAssessment(id, payload), "Academy assessment recorded")} onCreateMemory={(payload) => mutate(() => createLearningMemory(payload), "Preference saved under controlled learning")} onMemoryDecision={(id, status) => mutate(() => decideLearningMemory(id, status), "Learning preference updated")} />}
           {activeWorkspace === "data-lab" && <DataLab project={selectedProject} onRequest={(payload) => mutate(() => requestDataJob(payload), "Data cleaning plan sent to Approval Center")} />}
         </section>
       </main>
@@ -415,6 +437,7 @@ export default function App() {
           </section>
         </div>
       )}
+      {searchOpen && <WorkspaceSearch onClose={() => setSearchOpen(false)} />}
       {toast && <div className="toast"><Check size={16} />{toast}</div>}
     </div>
   );
@@ -862,7 +885,7 @@ function fleetTone(agent: IndependentAgent) {
   return agent.bridge.last_status === "healthy" || agent.bridge.last_status === "degraded" ? "safe" : "neutral";
 }
 
-function AgentFleet({ data, tab, onTab, onCreate, onPlugin, onPoll, onControl, onLearning, onRollback, onResolve }: {
+function AgentFleet({ data, tab, onTab, onCreate, onPlugin, onPoll, onControl, onLearning, onRollback, onResolve, onDrill }: {
   data: Bootstrap;
   tab: FleetTab;
   onTab: (tab: FleetTab) => void;
@@ -873,6 +896,7 @@ function AgentFleet({ data, tab, onTab, onCreate, onPlugin, onPoll, onControl, o
   onLearning: (payload: Record<string, unknown>) => Promise<void>;
   onRollback: (updateId: string) => Promise<void>;
   onResolve: (incidentId: string) => Promise<void>;
+  onDrill: (agentId: string) => Promise<void>;
 }) {
   const [learning, setLearning] = useState({
     agent_id: data.agent_fleet[0]?.id ?? "",
@@ -902,27 +926,40 @@ function AgentFleet({ data, tab, onTab, onCreate, onPlugin, onPoll, onControl, o
           <div className="fleet-stat-row"><span><strong>{Number(agent.snapshot.metrics?.tasks_total ?? 0)}</strong> tasks</span><span><strong>{agent.open_incidents}</strong> incidents</span><span><strong>{paused.length}</strong> paused</span></div>
           <div className="chip-row">{(agent.snapshot.identity?.capabilities ?? agent.capabilities).slice(0, 5).map((item) => <span key={item}>{item}</span>)}</div>
           {agent.bridge.last_error && <small className="fleet-error">{agent.bridge.last_error}</small>}
-          <div className="fleet-actions">{agent.bridge.dashboard_url && <a className="plugin-action" href={agent.bridge.dashboard_url}>Open independent studio <ChevronRight size={14} /></a>}<button disabled={!connected || agent.snapshot.controls?.quarantined} onClick={() => { if (window.confirm(`Quarantine ${agent.name}? Safe work will stop until recovery is approved.`)) void onControl(agent.id, "quarantine", null, "Owner initiated containment from Aegis Agent Fleet"); }}>Quarantine</button></div>
+          <div className="fleet-actions">{agent.bridge.dashboard_url && <a className="plugin-action" href={agent.bridge.dashboard_url}>Open independent studio <ChevronRight size={14} /></a>}<button disabled={!connected} onClick={() => void onDrill(agent.id)}>Safe drill</button><button disabled={!connected || agent.snapshot.controls?.quarantined} onClick={() => { if (window.confirm(`Quarantine ${agent.name}? Safe work will stop until recovery is approved.`)) void onControl(agent.id, "quarantine", null, "Owner initiated containment from Aegis Agent Fleet"); }}>Quarantine</button></div>
           <footer><span>Bridge v{agent.bridge.contract_version}</span><span>{agent.bridge.last_seen_at ? relativeTime(agent.bridge.last_seen_at) : "never seen"}</span></footer>
         </article>;
       })}{data.agent_fleet.length === 0 && <EmptyState icon={<Bot />} title="No independent agents registered" body="Register an authenticated loopback Agent Bridge before supervision begins." />}</div>}
 
       {tab === "performance" && <div className="fleet-panel-grid">{data.agent_fleet.map((agent) => {
         const metrics = agent.snapshot.metrics;
-        return <section className="panel fleet-panel" key={agent.id}><PanelHeader icon={<Activity size={17} />} title={agent.name} /><div className="fleet-kpis"><div><strong>{metrics?.tasks_total ?? 0}</strong><span>Recorded tasks</span></div><div><strong>{Math.round(Number(metrics?.failure_rate ?? 0) * 100)}%</strong><span>Failure rate</span></div><div><strong>{metrics?.resources?.rss_mb ?? 0} MB</strong><span>Bridge memory</span></div></div><div className="fleet-domain-metrics">{Object.entries(metrics?.domain ?? {}).map(([key, value]) => <span key={key}><b>{value}</b>{key.replaceAll("_", " ")}</span>)}</div><small>Observed {agent.snapshot.observed_at ? relativeTime(agent.snapshot.observed_at) : "never"}. Metrics exclude private task payloads.</small></section>;
+        return <section className="panel fleet-panel" key={agent.id}><PanelHeader icon={<Activity size={17} />} title={agent.name} /><div className="fleet-kpis"><div><strong>{metrics?.tasks_total ?? 0}</strong><span>Recorded tasks</span></div><div><strong>{Math.round(Number(metrics?.success_rate ?? 0) * 100)}%</strong><span>Success rate</span></div><div><strong>{Math.round(Number(metrics?.average_duration_ms ?? 0))} ms</strong><span>Average duration</span></div><div><strong>{metrics?.resources?.rss_mb ?? 0} MB</strong><span>Bridge memory</span></div></div><div className="fleet-domain-metrics">{Object.entries(metrics?.domain ?? {}).map(([key, value]) => <span key={key}><b>{value}</b>{key.replaceAll("_", " ")}</span>)}</div><small>Observed {agent.snapshot.observed_at ? relativeTime(agent.snapshot.observed_at) : "never"}. Metrics exclude private task payloads.</small></section>;
       })}</div>}
 
       {tab === "tasks" && <section className="panel"><PanelHeader icon={<Workflow size={17} />} title="Sanitized progress feed" /><div className="fleet-table"><div className="fleet-table__head"><span>Agent</span><span>Task</span><span>Status</span><span>Updated</span></div>{data.agent_fleet.flatMap((agent) => (agent.snapshot.tasks ?? []).map((task) => ({ agent, task }))).map(({ agent, task }) => <div key={`${agent.id}-${task.task_id}`}><span>{agent.name}</span><span>{task.task_type.replaceAll("_", " ")}</span><span><StatusPill tone={task.status === "completed" ? "safe" : task.status === "failed" ? "warning" : "neutral"}>{task.status}</StatusPill></span><span>{task.updated_at ? relativeTime(task.updated_at) : "—"}</span></div>)}</div><small>Only identifiers, state, and timestamps cross the bridge. Resume text, customer data, prompts, and credentials remain inside each agent.</small></section>}
 
       {tab === "skills" && <><CardGrid items={data.skills} render={(skill) => <SkillCard skill={skill} />} action={<button className="secondary-button" onClick={() => onCreate("skill")}><PackagePlus size={15} /> New Aegis skill</button>} /><div className="fleet-panel-grid">{data.agent_fleet.map((agent) => <section className="panel fleet-panel" key={agent.id}><PanelHeader icon={<Layers3 size={17} />} title={`${agent.name} reported skills`} /><div className="fleet-skill-list">{(agent.snapshot.skills ?? []).map((skill, index) => <span key={String(skill.skill_id ?? index)}><b>{String(skill.skill_id ?? "skill")}</b>v{String(skill.version ?? "unknown")}</span>)}</div></section>)}</div></>}
 
-      {tab === "security" && <div className="fleet-security-layout"><section className="panel"><PanelHeader icon={<ShieldCheck size={17} />} title="Incident reports" />{data.agent_incidents.length === 0 ? <EmptyState icon={<ShieldCheck />} title="No agent incidents" body="Aegis has not detected a threshold-crossing security or reliability event." /> : <div className="incident-list">{data.agent_incidents.map((incident) => <IncidentCard key={incident.id} incident={incident} agent={data.agent_fleet.find((item) => item.id === incident.agent_id)} onControl={onControl} onResolve={onResolve} />)}</div>}</section><section className="panel"><PanelHeader icon={<Activity size={17} />} title="Containment ledger" /><div className="control-ledger">{data.agent_controls.slice(0, 30).map((control) => <div key={control.id}><StatusPill tone={control.outcome === "completed" ? "safe" : "warning"}>{control.outcome}</StatusPill><div><strong>{control.action.replaceAll("_", " ")}</strong><span>{control.agent_id} · {control.capability ?? "whole agent"} · {control.source}</span><small>{control.reason}</small></div></div>)}</div></section></div>}
+      {tab === "security" && <div className="fleet-security-layout"><section className="panel"><PanelHeader icon={<ShieldCheck size={17} />} title="Incident reports" />{data.agent_incidents.length === 0 ? <EmptyState icon={<ShieldCheck />} title="No agent incidents" body="Aegis has not detected a threshold-crossing security or reliability event." /> : <div className="incident-list">{data.agent_incidents.map((incident) => <IncidentCard key={incident.id} incident={incident} agent={data.agent_fleet.find((item) => item.id === incident.agent_id)} onControl={onControl} onResolve={onResolve} />)}</div>}<div className="drill-history">{data.containment_drills.map((drill) => <span key={drill.id}><StatusPill tone={drill.status === "passed" ? "safe" : "warning"}>{drill.status}</StatusPill>{drill.agent_id} · isolated diagnostic drill</span>)}</div></section><section className="panel"><PanelHeader icon={<Activity size={17} />} title="Containment ledger" /><div className="control-ledger">{data.agent_controls.slice(0, 30).map((control) => <div key={control.id}><StatusPill tone={control.outcome === "completed" ? "safe" : "warning"}>{control.outcome}</StatusPill><div><strong>{control.action.replaceAll("_", " ")}</strong><span>{control.agent_id} · {control.capability ?? "whole agent"} · {control.source}</span><small>{control.reason}</small></div></div>)}</div></section></div>}
 
       {tab === "learning" && <div className="fleet-learning-layout"><section className="panel"><PanelHeader icon={<BrainCircuit size={17} />} title="Prepare controlled learning update" /><form className="fleet-learning-form" onSubmit={submitLearning}><label>Target agent<select required value={learning.agent_id} onChange={(event) => setLearning({ ...learning, agent_id: event.target.value })}>{data.agent_fleet.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>)}</select></label><label>Completed course<select value={learning.course_id} onChange={(event) => { const course = data.academy_courses.find((item) => item.id === event.target.value); setLearning({ ...learning, course_id: event.target.value, source: course?.source_url ?? course?.provider ?? learning.source }); }}><option value="">No completed course — require approval</option>{data.academy_courses.filter((course) => course.status === "completed").map((course) => <option value={course.id} key={course.id}>{course.title}</option>)}</select></label><input required value={learning.title} onChange={(event) => setLearning({ ...learning, title: event.target.value })} placeholder="Knowledge or skill update title" /><input required value={learning.source} onChange={(event) => setLearning({ ...learning, source: event.target.value })} placeholder="Source course, URL, or owner reference" /><textarea required minLength={40} value={learning.content} onChange={(event) => setLearning({ ...learning, content: event.target.value })} placeholder="Verified lesson, operating rule, or bounded skill reference…" /><label>Risk<select value={learning.risk_level} onChange={(event) => setLearning({ ...learning, risk_level: event.target.value })}><option value="low">Low — may auto-deploy after all checks</option><option value="medium">Medium — owner approval</option><option value="high">High — owner approval</option><option value="critical">Critical — owner approval</option></select></label><button className="primary-button">Evaluate update</button><small>Only a low-risk update linked to a completed course, with no authority-expanding language, can auto-deploy. Every deployment is hashed, reported, and reversible.</small></form></section><section className="panel"><PanelHeader icon={<Archive size={17} />} title="Learning and rollback history" /><div className="learning-ledger">{data.agent_learning_updates.map((update) => <article key={update.id}><div><StatusPill tone={update.status === "deployed" ? "safe" : update.status === "failed" ? "warning" : "neutral"}>{update.status.replaceAll("_", " ")}</StatusPill><span>{update.risk_level} risk</span></div><h3>{update.title}</h3><p>{update.content_preview}</p><small>{update.agent_id} · SHA-256 {update.content_sha256.slice(0, 12)}… · {relativeTime(update.created_at)}</small>{update.status === "deployed" && <button onClick={() => void onRollback(update.id)}><RotateCcw size={13} /> Request rollback</button>}</article>)}</div></section></div>}
 
       {tab === "plugins" && <CardGrid items={data.plugins} render={(plugin) => <PluginCard plugin={plugin} onChange={() => onPlugin(plugin)} />} />}
     </div>
   );
+}
+
+function WorkspaceSearch({ onClose }: { onClose: () => void }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<Array<Record<string, unknown>>>([]);
+  const [searching, setSearching] = useState(false);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (query.trim().length < 2) return;
+    setSearching(true);
+    try { setResults((await searchWorkspace(query.trim())).results); } finally { setSearching(false); }
+  };
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="workspace-search" onMouseDown={(event) => event.stopPropagation()}><header><div><div className="eyebrow">ENCRYPTED WORKSPACE INDEX</div><h2>Search Aegis</h2></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header><form className="research-bar" onSubmit={submit}><Search size={17} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Projects, tasks, intelligence, opportunities, courses…" /><button disabled={query.trim().length < 2 || searching}>{searching ? "Searching…" : "Search"}</button></form><div className="search-results">{results.map((item) => <article key={`${item.kind}-${item.id}`}><StatusPill>{String(item.kind).replaceAll("_", " ")}</StatusPill><div><strong>{String(item.title)}</strong><p>{String(item.summary ?? "").slice(0, 240)}</p></div></article>)}{query && !searching && results.length === 0 && <EmptyState icon={<Search />} title="No matching local records" body="Search covers projects, tasks, World Pulse, opportunities, solutions, and Academy courses." />}</div></aside></div>;
 }
 
 function IncidentCard({ incident, agent, onControl, onResolve }: { incident: AgentIncident; agent?: IndependentAgent; onControl: (agentId: string, action: "pause_capability" | "resume_capability" | "quarantine" | "recover", capability: string | null, reason: string) => Promise<void>; onResolve: (incidentId: string) => Promise<void> }) {
@@ -956,11 +993,12 @@ function LegacyWorldPulse({ data, project, onResearch }: { data: Bootstrap; proj
   return <div className="single-workspace"><div className="workspace-intro pulse-intro"><div><div className="eyebrow">GLOBAL IMPACT INTELLIGENCE</div><h2>Signal over noise.<br /><span>Every claim earns its confidence.</span></h2><p>AI, IT, economies, conflicts, trade, gold, silver, politicians, insiders, and institutional holdings.</p></div><Radar className="intro-icon" /></div><form className="research-bar" onSubmit={submit}><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Research a public topic…" /><button disabled={!query.trim()}>Request research</button></form><div className="source-policy"><ShieldCheck size={16} /><span>Public queries only. Web access requires Approval Center authorization and an approved research session.</span></div>{data.world_pulse.length === 0 ? <EmptyState icon={<Globe2 />} title="World Pulse is protected and waiting" body={`No unverified headlines are displayed. Start an approved research task${project ? ` for ${project.name}` : ""}.`} /> : <div className="card-grid">{data.world_pulse.map((item, index) => <article className="entity-card pulse-card" key={index}><div className="pulse-card__meta"><StatusPill tone={String(item.verification_state) === "single_source" ? "neutral" : "safe"}>{String(item.verification_state ?? "unverified").replaceAll("_", " ")}</StatusPill><span>{Math.round(Number(item.confidence ?? 0) * 100)}% source confidence</span></div><h3>{String(item.headline)}</h3><p>{String(item.summary)}</p>{item.source_url && <a href={String(item.source_url)} target="_blank" rel="noreferrer">{String(item.domain ?? "Open source")} <ArrowUpRight size={12} /></a>}</article>)}</div>}</div>;
 }
 
-function WorldPulseControls({ data, onResearch, onCreateSource, onCreateSchedule }: {
+function WorldPulseControls({ data, onResearch, onCreateSource, onCreateSchedule, onUpdateSchedule }: {
   data: Bootstrap;
   onResearch: (query: string, category: string, scheduleId?: string) => Promise<void>;
   onCreateSource: (payload: Record<string, unknown>) => Promise<void>;
   onCreateSchedule: (payload: Record<string, unknown>) => Promise<void>;
+  onUpdateSchedule: (id: string, status: "planned" | "paused") => Promise<void>;
 }) {
   const [schedule, setSchedule] = useState({ name: "", niche: "ai-technology", query: "", cadence_hours: 24 });
   const [source, setSource] = useState({ label: "", niche: "ai-technology", source_type: "publisher", locator: "", reason: "" });
@@ -971,12 +1009,12 @@ function WorldPulseControls({ data, onResearch, onCreateSource, onCreateSchedule
       <details className="panel"><summary><Plus size={13} /> Save research schedule</summary><form onSubmit={submitSchedule}><input required value={schedule.name} onChange={(event) => setSchedule({ ...schedule, name: event.target.value })} placeholder="Schedule name" /><input required value={schedule.query} onChange={(event) => setSchedule({ ...schedule, query: event.target.value })} placeholder="Bounded public query" /><select value={schedule.niche} onChange={(event) => setSchedule({ ...schedule, niche: event.target.value })}><option value="ai-technology">AI & technology</option><option value="markets-trades">Markets & trades</option><option value="economy-trade">Economy & trade</option><option value="us-politics">US politics</option><option value="global-affairs">Global affairs</option><option value="commodities">Commodities</option></select><label>Cadence (hours)<input type="number" min="1" max="720" value={schedule.cadence_hours} onChange={(event) => setSchedule({ ...schedule, cadence_hours: Number(event.target.value) })} /></label><button className="secondary-button">Save plan</button><small>Each run still creates a Security & Operations approval. No unattended network access is enabled.</small></form></details>
       <details className="panel"><summary><Plus size={13} /> Propose trusted source</summary><form onSubmit={submitSource}><input required value={source.label} onChange={(event) => setSource({ ...source, label: event.target.value })} placeholder="Publisher or public account" /><input required value={source.locator} onChange={(event) => setSource({ ...source, locator: event.target.value })} placeholder="Official URL or public handle" /><select value={source.source_type} onChange={(event) => setSource({ ...source, source_type: event.target.value })}><option value="publisher">Publisher</option><option value="public_account">Public account</option><option value="public_data">Public dataset</option></select><input required minLength={5} value={source.reason} onChange={(event) => setSource({ ...source, reason: event.target.value })} placeholder="Why should Aegis monitor it?" /><button className="secondary-button">Send for approval</button><small>Approval means the source may be monitored; it does not make every claim from that source true.</small></form></details>
     </div>
-    {data.world_pulse_schedules.length > 0 && <div className="pulse-schedule-list">{data.world_pulse_schedules.map((item) => <article key={item.id}><div><strong>{item.name}</strong><span>{item.niche.replaceAll("-", " ")} · every {item.cadence_hours}h · {item.last_requested_at ? `requested ${timeAgo(item.last_requested_at)} ago` : "never requested"}</span></div><button onClick={() => void onResearch(item.query, item.niche, item.id)}>Request run now</button></article>)}</div>}
+    {data.world_pulse_schedules.length > 0 && <div className="pulse-schedule-list">{data.world_pulse_schedules.map((item) => <article key={item.id}><div><strong>{item.name}</strong><span>{item.niche.replaceAll("-", " ")} · every {item.cadence_hours}h · {item.status} · {item.last_requested_at ? `requested ${relativeTime(item.last_requested_at)}` : "due after activation"}</span></div><button onClick={() => void onUpdateSchedule(item.id, item.status === "paused" ? "planned" : "paused")}>{item.status === "paused" ? "Activate" : "Pause"}</button><button onClick={() => void onResearch(item.query, item.niche, item.id)}>Request run now</button></article>)}</div>}
     {data.world_pulse_sources.length > 0 && <div className="approved-source-strip">{data.world_pulse_sources.map((item) => <span key={item.id}><StatusPill tone={item.status === "approved" ? "safe" : "warning"}>{item.status}</StatusPill>{item.label} · {item.source_type.replaceAll("_", " ")}</span>)}</div>}
   </section>;
 }
 
-function WorldPulse({ data, project, onResearch, onCreateSource, onCreateSchedule }: { data: Bootstrap; project: Project | null; onResearch: (query: string, category: string, scheduleId?: string) => Promise<void>; onCreateSource: (payload: Record<string, unknown>) => Promise<void>; onCreateSchedule: (payload: Record<string, unknown>) => Promise<void> }) {
+function WorldPulse({ data, project, onResearch, onCreateSource, onCreateSchedule, onUpdateSchedule }: { data: Bootstrap; project: Project | null; onResearch: (query: string, category: string, scheduleId?: string) => Promise<void>; onCreateSource: (payload: Record<string, unknown>) => Promise<void>; onCreateSchedule: (payload: Record<string, unknown>) => Promise<void>; onUpdateSchedule: (id: string, status: "planned" | "paused") => Promise<void> }) {
   const niches = ["all", "ai-technology", "markets-trades", "economy-trade", "us-politics", "global-affairs", "commodities", "public-figures"];
   const [query, setQuery] = useState("");
   const [niche, setNiche] = useState("all");
@@ -997,8 +1035,8 @@ function WorldPulse({ data, project, onResearch, onCreateSource, onCreateSchedul
     <div className="niche-tabs">{niches.map((item) => <button key={item} className={niche === item ? "active" : ""} onClick={() => setNiche(item)}>{item.replaceAll("-", " ")}</button>)}</div>
     <form className="research-bar" onSubmit={submit}><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Research ${niche === "all" ? "a public topic" : niche.replaceAll("-", " ")}…`} /><button disabled={!query.trim()}>Request research</button></form>
     <div className="source-policy"><ShieldCheck size={16} /><span>Public queries only. Research requires approval; reporting, commentary, and social claims remain visibly distinct.</span></div>
-    <WorldPulseControls data={data} onResearch={onResearch} onCreateSource={onCreateSource} onCreateSchedule={onCreateSchedule} />
-    {items.length === 0 ? <EmptyState icon={<Globe2 />} title="No verified signals in this niche" body={`Start an approved research task${project ? ` for ${project.name}` : ""}. Aegis does not fill empty space with unverified headlines.`} /> : <div className="card-grid">{items.map((item, index) => <article className="entity-card pulse-card" key={item.id ?? index}><div className="pulse-card__meta"><StatusPill tone={item.verification_state === "single_source" ? "neutral" : "safe"}>{item.verification_state.replaceAll("_", " ")}</StatusPill><span>{Math.round(item.confidence * 100)}% confidence</span></div><small>{String(item.category ?? "general").replaceAll("-", " ")} · {String(item.region ?? "Global")}</small><h3>{item.headline}</h3><p>{item.summary}</p><button className="reader-button" onClick={() => setReader(item)}>Read inside Aegis <ChevronRight size={12} /></button></article>)}</div>}
+    <WorldPulseControls data={data} onResearch={onResearch} onCreateSource={onCreateSource} onCreateSchedule={onCreateSchedule} onUpdateSchedule={onUpdateSchedule} />
+    {items.length === 0 ? <EmptyState icon={<Globe2 />} title="No verified signals in this niche" body={`Start an approved research task${project ? ` for ${project.name}` : ""}. Aegis does not fill empty space with unverified headlines.`} /> : <div className="card-grid">{items.map((item, index) => <article className="entity-card pulse-card" key={item.id ?? index}><div className="pulse-card__meta"><StatusPill tone={item.verification_state === "single_source" ? "neutral" : "safe"}>{item.verification_state.replaceAll("_", " ")}</StatusPill><span>{Math.round(item.confidence * 100)}% confidence</span></div><small>{String(item.category ?? "general").replaceAll("-", " ")} · {String(item.region ?? "Global")} · collected {item.collected_at ? relativeTime(item.collected_at) : "unknown"}</small><h3>{item.headline}</h3><p>{item.summary}</p><button className="reader-button" onClick={() => setReader(item)}>Read inside Aegis <ChevronRight size={12} /></button></article>)}</div>}
     {reader && <div className="reader-backdrop" onMouseDown={() => setReader(null)}><aside className="pulse-reader" onMouseDown={(event) => event.stopPropagation()}><header><div><div className="eyebrow">AEGIS INTERNAL READER</div><h2>{reader.headline}</h2></div><button className="icon-button" onClick={() => setReader(null)}><X size={18} /></button></header><div className="reader-evidence"><StatusPill tone={reader.verification_state === "single_source" ? "warning" : "safe"}>{reader.verification_state.replaceAll("_", " ")}</StatusPill><span>{Math.round(reader.confidence * 100)}% source confidence</span></div><p>{reader.summary}</p><section><h3>Why it matters</h3><p>This brief is stored locally from an approved research session. Review the original before making a consequential decision.</p></section>{reader.source_url && <a className="primary-button" href={reader.source_url}>Open original in this tab <ArrowUpRight size={14} /></a>}</aside></div>}
   </div>;
 }
@@ -1027,12 +1065,21 @@ function SolutionCreateForm({ onCreate }: { onCreate: (payload: Record<string, u
   return <form className="research-bar workspace-action-form" onSubmit={submit}><FlaskConical size={18} /><input required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Solution name" /><input required minLength={20} value={problem} onChange={(event) => setProblem(event.target.value)} placeholder="Observed problem" /><input required value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="Who has this problem?" /><button>Discover</button></form>;
 }
 
-function OpportunityEngine({ data, project, onResearch, onCreate, onSendToFactory }: {
+function OpportunityCycles({ data, onCreate, onUpdate, onRun }: { data: Bootstrap; onCreate: (payload: Record<string, unknown>) => Promise<void>; onUpdate: (id: string, status: "active" | "paused") => Promise<void>; onRun: (id: string) => Promise<void> }) {
+  const [cycle, setCycle] = useState({ name: "", niche: "ai-technology", query: "", allocation: "existing-80", cadence_hours: 168 });
+  const submit = async (event: FormEvent) => { event.preventDefault(); await onCreate(cycle); setCycle({ ...cycle, name: "", query: "" }); };
+  return <section className="opportunity-section"><PanelHeader icon={<RotateCcw size={17} />} title="Recurring discovery cycles" action={<StatusPill>{data.opportunity_cycles.length} configured</StatusPill>} /><div className="opportunity-cycle-layout"><form className="panel cycle-form" onSubmit={submit}><input required value={cycle.name} onChange={(event) => setCycle({ ...cycle, name: event.target.value })} placeholder="Cycle name" /><input required value={cycle.query} onChange={(event) => setCycle({ ...cycle, query: event.target.value })} placeholder="Evidence topic or market gap" /><select value={cycle.niche} onChange={(event) => setCycle({ ...cycle, niche: event.target.value })}><option value="ai-technology">AI & technology</option><option value="markets-trades">Markets & trades</option><option value="economy-trade">Economy & trade</option><option value="career">Career services</option><option value="commerce">Commerce</option></select><select value={cycle.allocation} onChange={(event) => setCycle({ ...cycle, allocation: event.target.value })}><option value="existing-80">Existing business · 80%</option><option value="explore-20">Exploration · 20%</option></select><label>Cadence (hours)<input type="number" min="1" max="720" value={cycle.cadence_hours} onChange={(event) => setCycle({ ...cycle, cadence_hours: Number(event.target.value) })} /></label><button className="secondary-button">Create cycle</button><small>Cycles analyze stored verified signals locally. New web research still requires Security & Operations approval.</small></form><div className="cycle-list">{data.opportunity_cycles.map((item) => <article className="entity-card" key={item.id}><div className="entity-card__top"><StatusPill tone={item.status === "active" ? "safe" : "neutral"}>{item.status}</StatusPill><span>{item.allocation}</span></div><h3>{item.name}</h3><p>{item.query}</p><small>{item.niche.replaceAll("-", " ")} · every {item.cadence_hours}h · {item.last_run_at ? `last run ${relativeTime(item.last_run_at)}` : "not run"}</small><footer><button onClick={() => void onUpdate(item.id, item.status === "active" ? "paused" : "active")}>{item.status === "active" ? "Pause" : "Activate"}</button><button onClick={() => void onRun(item.id)} disabled={item.status !== "active"}>Run local cycle</button></footer></article>)}</div></div></section>;
+}
+
+function OpportunityEngine({ data, project, onResearch, onCreate, onSendToFactory, onCreateCycle, onUpdateCycle, onRunCycle }: {
   data: Bootstrap;
   project: Project | null;
   onResearch: (query: string) => Promise<void>;
   onCreate: (payload: Record<string, unknown>) => Promise<void>;
   onSendToFactory: (payload: Record<string, unknown>) => Promise<void>;
+  onCreateCycle: (payload: Record<string, unknown>) => Promise<void>;
+  onUpdateCycle: (id: string, status: "active" | "paused") => Promise<void>;
+  onRunCycle: (id: string) => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -1050,6 +1097,7 @@ function OpportunityEngine({ data, project, onResearch, onCreate, onSendToFactor
     <div className="workspace-intro"><div><div className="eyebrow">CAPITAL DISCIPLINE</div><h2>Research first.<br /><span>Invest after evidence.</span></h2><p>Aegis collects approved public evidence, labels source quality, writes an executive report, and only then lets an idea enter the scorecard.</p></div><Target className="intro-icon" /></div>
     <form className="research-bar opportunity-research" onSubmit={submit}><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Research a market, customer problem, or AI business opportunity…" /><button disabled={!query.trim() || submitting}>{submitting ? "Requesting…" : "Research opportunity"}</button></form>
     <div className="source-policy"><ShieldCheck size={16} /><span>Public sources only. Each run requires approval, blocks private/client data, records citations, and produces an encrypted local report.</span></div>
+    <OpportunityCycles data={data} onCreate={onCreateCycle} onUpdate={onUpdateCycle} onRun={onRunCycle} />
     <div className="opportunity-summary-grid"><div className="allocation-panel"><div className="allocation-ring"><span><strong>80 / 20</strong><small>allocation</small></span></div><div><h3>Existing businesses</h3><div className="allocation-bar"><i style={{ width: "80%" }} /></div><p>80% improves and monetizes what we already own.</p><h3>Exploration</h3><div className="allocation-bar exploration"><i style={{ width: "20%" }} /></div><p>20% tests new AI opportunities with strict stop criteria.</p></div></div><div className="opportunity-metrics"><article><strong>{reports.length}</strong><span>Research reports</span></article><article><strong>{data.opportunities.length}</strong><span>Scored opportunities</span></article><article><strong>{reports.reduce((total, item) => total + item.source_count, 0)}</strong><span>Accepted sources</span></article></div></div>
     <section className="opportunity-section"><PanelHeader icon={<Radar size={17} />} title="Opportunity research reports" action={<StatusPill tone={reports.length ? "safe" : "neutral"}>{reports.length} ready</StatusPill>} />
       {reports.length === 0 ? <EmptyState icon={<Radar />} title="No research report yet" body="Submit a public topic, approve it in Approval Center, and Aegis will return here with a source-backed executive report." /> : <div className="research-report-list">{reports.map((item) => <article className="research-report" key={item.id}><header><div><div className="eyebrow">PUBLIC RESEARCH · {new Date(item.created_at).toLocaleString()}</div><h3>{item.report.title}</h3></div><div className="report-badges"><StatusPill tone={item.report.quality_gate === "supported_discovery" ? "safe" : "warning"}>{item.report.quality_gate?.replaceAll("_", " ") ?? "legacy quality"}</StatusPill><StatusPill tone={Number(item.report.source_metrics.verified_page_count ?? 0) > 0 ? "safe" : "warning"}>{Number(item.report.source_metrics.verified_page_count ?? 0)} full pages</StatusPill><StatusPill tone={Number(item.report.source_metrics.unresolved_claim_count ?? 0) === 0 ? "safe" : "danger"}>{Number(item.report.source_metrics.corroborated_claim_count ?? 0)} corroborated · {Number(item.report.source_metrics.unresolved_claim_count ?? 0)} conflicts</StatusPill><StatusPill tone={item.independent_domains >= 2 ? "safe" : "warning"}>{item.source_count} sources · {item.independent_domains} domains</StatusPill></div></header><section><h4>Executive Summary</h4><ul>{item.report.executive_summary.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Key findings</h4><div className="report-findings">{item.report.key_findings.map((finding, index) => <article key={`${finding.headline}-${index}`}><div><StatusPill tone={finding.confidence >= .7 ? "safe" : "neutral"}>{Math.round(finding.confidence * 100)}% confidence</StatusPill><span>{finding.source_ids.join(", ")}</span></div><h5>{finding.headline}</h5><p>{finding.evidence}</p><small>{finding.implication}</small></article>)}</div></section><details><summary>Recommendations, claim checks, caveats, and sources</summary><div className="report-detail-grid"><section><h4>Recommended next steps</h4><ol>{item.report.recommended_next_steps.map((line) => <li key={line}>{line}</li>)}</ol></section><section><h4>Claim-level checks</h4><ul>{(item.report.claim_assessments ?? []).map((claim) => <li key={claim.id}><strong>{claim.status.replaceAll("_", " ")}</strong> · {claim.claim} · {claim.source_ids.join(", ")}{claim.metric_values.length ? ` · ${claim.metric_values.join(" vs ")}` : ""}</li>)}</ul></section><section><h4>Further questions</h4><ul>{item.report.further_questions.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Caveats</h4><ul>{item.report.caveats.map((line) => <li key={line}>{line}</li>)}</ul></section><section><h4>Sources</h4><div className="report-sources">{item.report.sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer"><span>{source.id} · {source.domain} · {source.source_tier} · {source.freshness_state ?? "unknown date"} · {source.page_verification_state?.replaceAll("_", " ") ?? "legacy excerpt"}{source.methodology_terms?.length ? " · methodology signal" : ""}</span>{source.title}<ArrowUpRight size={12} /></a>)}</div></section></div></details></article>)}</div>}
@@ -1098,11 +1146,11 @@ function ApprovalCenter({ approvals, onDecision }: { approvals: Approval[]; onDe
   return <div className="single-workspace">
     <div className="workspace-intro compact"><div><div className="eyebrow">OWNER AUTHORITY · ONE AUDIT LEDGER</div><h2>Two queues.<br /><span>One accountable decision trail.</span></h2></div><UserRoundCheck className="intro-icon" /></div>
     <div className="approval-queue-tabs"><button className={queue === "security_operations" ? "active" : ""} onClick={() => setQueue("security_operations")}><ShieldCheck size={15} /> Security & Operations <b>{count("security_operations")}</b></button><button className={queue === "business_creative" ? "active" : ""} onClick={() => setQueue("business_creative")}><Sparkles size={15} /> Business & Creative <b>{count("business_creative")}</b></button></div>
-    {visible.length === 0 ? <EmptyState icon={<Check />} title={`${queue === "security_operations" ? "Security & Operations" : "Business & Creative"} queue is clear`} body="Aegis will show exact scope, evidence, risk, freshness, and intended action before asking." /> : <div className="approval-list">{visible.map((item) => <article key={item.id}><div><StatusPill tone={item.risk_level === "high" || item.risk_level === "critical" ? "danger" : "warning"}>{item.risk_level} risk</StatusPill><span>{timeAgo(item.requested_at)}</span></div><h3>{item.summary}</h3><p>Action: {item.action.replaceAll("_", " ")}</p><pre>{JSON.stringify(item.evidence, null, 2)}</pre><footer><button className="decline-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "declined")}><X size={15} /> Decline</button><button className="approve-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "approved")}>{runningId === item.id ? <Activity size={15} /> : <Check size={15} />} {runningId === item.id ? "Executing…" : ["public_web_research", "github_operation", "codex_device_login", "codex_task", "data_lab_job", "solution_transition"].includes(item.action) ? "Approve & run" : "Approve"}</button></footer></article>)}</div>}
+    {visible.length === 0 ? <EmptyState icon={<Check />} title={`${queue === "security_operations" ? "Security & Operations" : "Business & Creative"} queue is clear`} body="Aegis will show exact scope, evidence, risk, freshness, and intended action before asking." /> : <div className="approval-list">{visible.map((item) => <article key={item.id}><div><StatusPill tone={item.risk_level === "high" || item.risk_level === "critical" ? "danger" : "warning"}>{item.risk_level} risk</StatusPill><span>{timeAgo(item.requested_at)}</span></div><h3>{item.summary}</h3><p>Action: {item.action.replaceAll("_", " ")}</p><pre>{JSON.stringify(item.evidence, null, 2)}</pre><footer><button className="decline-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "declined")}><X size={15} /> Decline</button><button className="approve-button" disabled={Boolean(runningId)} onClick={() => void decide(item, "approved")}>{runningId === item.id ? <Activity size={15} /> : <Check size={15} />} {runningId === item.id ? "Executing…" : ["public_web_research", "github_operation", "codex_device_login", "codex_task", "data_lab_job", "solution_transition", "encrypted_backup", "restore_drill"].includes(item.action) ? "Approve & run" : "Approve"}</button></footer></article>)}</div>}
   </div>;
 }
 
-function SecuritySentinel({ data, project }: { data: Bootstrap; project: Project | null }) {
+function SecuritySentinel({ data, project, onBackup, onRestore }: { data: Bootstrap; project: Project | null; onBackup: () => Promise<void>; onRestore: () => Promise<void> }) {
   const [scan, setScan] = useState<SecurityScan | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -1131,6 +1179,7 @@ function SecuritySentinel({ data, project }: { data: Bootstrap; project: Project
     <div className="workspace-intro security-intro"><div><div className="eyebrow">CONTINUOUS ASSURANCE</div><h2>Trust evidence.<br /><span>Verify everything.</span></h2><p>The foundation remains authoritative for encryption, local inference, data handling, approvals, and network boundaries.</p></div><ShieldCheck className="intro-icon" /></div>
     <div className="security-grid">{controls.map(([name, passed, detail]) => <article key={String(name)} className={passed ? "passed" : "guarded"}><span>{passed ? <Check /> : <LockKeyhole />}</span><div><h3>{String(name)}</h3><p>{String(detail)}</p></div></article>)}</div>
     <div className="panel policy-panel"><PanelHeader icon={<FileCode2 size={17} />} title="Inherited foundation" action={<StatusPill tone="safe">Enforced</StatusPill>} /><p>Every Aegis workspace, agent, skill, and plugin passes through the same SQLCipher, loopback, offline-mode, secret-redaction, and approval controls.</p></div>
+    <section className="panel operations-panel"><PanelHeader icon={<Archive size={17} />} title="Encrypted backup and recovery" action={<StatusPill tone={data.operations.encrypted_only ? "safe" : "danger"}>{data.operations.backup_count} backups</StatusPill>} /><div className="github-status-grid"><article><span>Latest verified artifact</span><strong>{data.operations.latest_backup ?? "None yet"}</strong></article><article><span>Restore policy</span><strong>{data.operations.restore_policy.replaceAll("_", " ")}</strong></article><article><span>Production restore</span><strong>{data.operations.production_restore.replaceAll("_", " ")}</strong></article></div><div className="fleet-actions"><button className="secondary-button" onClick={() => void onBackup()}>Request encrypted backup</button><button className="secondary-button" disabled={!data.operations.backup_count} onClick={() => void onRestore()}>Request non-destructive restore drill</button></div><small>Both actions require Security & Operations approval. A drill decrypts into a temporary folder, verifies every manifest hash, deletes the copy, and never changes production data.</small></section>
     <section className="panel sentinel-scan">
       <PanelHeader icon={<Search size={17} />} title="Registered-project local scan" action={<button className="secondary-button" disabled={!project || scanning} onClick={() => void executeScan()}>{scanning ? "Scanning…" : "Run read-only scan"}</button>} />
       <p>Scans tracked text files for secret-shaped values and risky code patterns. It does not execute project code or contact an external vulnerability service.</p>
@@ -1144,15 +1193,16 @@ function SecuritySentinel({ data, project }: { data: Bootstrap; project: Project
   </div>;
 }
 
-function PrivateVoiceSession() {
+function PrivateVoiceSession({ status }: { status: Bootstrap["voice"] }) {
   const [recording, setRecording] = useState(false);
   const [message, setMessage] = useState("Push to talk when you're ready.");
+  const [voiceState, setVoiceState] = useState(status.session_state || "idle");
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const chunks = useRef<Blob[]>([]);
   const toggle = async () => {
     if (recording) {
-      recorder.current?.stop(); stream.current?.getTracks().forEach((track) => track.stop()); setRecording(false); setMessage("Transcribing with the local speech engine…"); return;
+      recorder.current?.stop(); stream.current?.getTracks().forEach((track) => track.stop()); setRecording(false); setVoiceState("processing"); setMessage("Transcribing with the local speech engine…"); return;
     }
     try {
       stream.current = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1163,19 +1213,33 @@ function PrivateVoiceSession() {
         try {
           const result = await transcribeVoice(new Blob(chunks.current, { type: recorder.current?.mimeType || "audio/webm" }));
           setMessage(result.text || "No speech detected.");
-          if (result.text) await speakVoice(`I heard: ${result.text}`);
-        } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Local transcription failed."); }
+          if (result.text) { setVoiceState("speaking"); await speakVoice(`I heard: ${result.text}`); }
+        } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Local transcription failed."); } finally { setVoiceState("idle"); }
       };
-      recorder.current.start(); setRecording(true); setMessage("Listening locally… nothing is being uploaded.");
+      recorder.current.start(); setRecording(true); setVoiceState("listening"); setMessage("Listening locally… nothing is being uploaded.");
     } catch { setMessage("Microphone permission was not granted."); }
   };
-  return <div className="voice-workspace"><div className={`voice-orb ${recording ? "recording" : ""}`}><button onClick={() => void toggle()}>{recording ? <Square /> : <Mic />}</button><i /><i /><i /></div><div className="eyebrow">PRIVATE PUSH-TO-TALK</div><h2>{message}</h2><p>Audio goes only to the loopback Aegis API. Temporary recordings are deleted after local transcription; no cloud speech service is used.</p><StatusPill tone="safe"><LockKeyhole size={12} /> Local audio policy</StatusPill></div>;
+  const stopSpeaking = async () => { await interruptVoice(); setVoiceState("idle"); setMessage("Aegis stopped speaking."); };
+  return <div className={`voice-workspace avatar-state-${voiceState}`}><img className="voice-avatar" src="/aegis-avatar.png" alt={`Aegis avatar · ${voiceState}`} /><div className={`voice-orb ${recording ? "recording" : ""}`}><button onClick={() => void toggle()}>{recording ? <Square /> : <Mic />}</button><i /><i /><i /></div><div className="eyebrow">PRIVATE CONVERSATION · {voiceState}</div><h2>{message}</h2><p>Raw audio is deleted immediately after local transcription. A transcript is not saved unless you submit it to the workspace.</p><div className="fleet-actions"><StatusPill tone="safe"><LockKeyhole size={12} /> Local audio policy</StatusPill><button className="secondary-button" disabled={voiceState !== "speaking"} onClick={() => void stopSpeaking()}>Interrupt voice</button><button className="secondary-button" onClick={() => void getVoiceStatus().then((next) => setVoiceState(String(next.session_state ?? "idle")))}>Check state</button></div></div>;
 }
 
-function AegisHub({ data, onCreateCourse, onUpdateCourse, onCreateMemory, onMemoryDecision }: {
+function AcademyEvidencePanel({ data, onAddMaterial, onAddAssessment }: { data: Bootstrap; onAddMaterial: (id: string, payload: Record<string, unknown>) => Promise<void>; onAddAssessment: (id: string, payload: Record<string, unknown>) => Promise<void> }) {
+  const [courseId, setCourseId] = useState(data.academy_courses[0]?.id ?? "");
+  const [material, setMaterial] = useState({ module_title: "", source_url: "", content: "", owner_attested: false });
+  const [assessment, setAssessment] = useState({ title: "", assessment_type: "exercise", score: 80, evidence: {} });
+  const selected = data.academy_courses.find((item) => item.id === courseId);
+  const submitMaterial = async (event: FormEvent) => { event.preventDefault(); if (!courseId) return; await onAddMaterial(courseId, { ...material, source_url: material.source_url || null }); setMaterial({ module_title: "", source_url: "", content: "", owner_attested: false }); };
+  const submitAssessment = async (event: FormEvent) => { event.preventDefault(); if (!courseId) return; await onAddAssessment(courseId, assessment); setAssessment({ ...assessment, title: "", score: 80 }); };
+  if (!data.academy_courses.length) return null;
+  return <section className="panel academy-evidence"><PanelHeader icon={<ShieldCheck size={17} />} title="Course evidence and evaluation" action={<StatusPill tone={selected?.completion_ready ? "safe" : "warning"}>{selected?.completion_ready ? "completion ready" : "evidence required"}</StatusPill>} /><label>Learning path<select value={courseId} onChange={(event) => setCourseId(event.target.value)}>{data.academy_courses.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label><div className="academy-evidence-grid"><form onSubmit={submitMaterial}><h3>Add permitted material</h3><input required value={material.module_title} onChange={(event) => setMaterial({ ...material, module_title: event.target.value })} placeholder="Module title" /><input value={material.source_url} onChange={(event) => setMaterial({ ...material, source_url: event.target.value })} placeholder="Public HTTPS source (optional)" /><textarea required minLength={40} value={material.content} onChange={(event) => setMaterial({ ...material, content: event.target.value })} placeholder="Your notes or permitted course material…" /><label><input type="checkbox" checked={material.owner_attested} onChange={(event) => setMaterial({ ...material, owner_attested: event.target.checked })} /> I attest I may store this material locally</label><button className="secondary-button">Hash and add material</button></form><form onSubmit={submitAssessment}><h3>Record evaluation</h3><input required value={assessment.title} onChange={(event) => setAssessment({ ...assessment, title: event.target.value })} placeholder="Quiz, exercise, or project" /><select value={assessment.assessment_type} onChange={(event) => setAssessment({ ...assessment, assessment_type: event.target.value })}><option value="quiz">Quiz</option><option value="exercise">Exercise</option><option value="project">Project</option></select><label>Score<input type="number" min="0" max="100" value={assessment.score} onChange={(event) => setAssessment({ ...assessment, score: Number(event.target.value) })} /></label><button className="secondary-button">Record assessment</button><small>80% is the passing threshold. Completion also requires 100% progress and at least one verified or owner-attested material.</small></form></div>{selected && <small>{selected.materials.length} materials · {selected.assessments.filter((item) => item.passed).length} passed assessments · hashes stored locally</small>}</section>;
+}
+
+function AegisHub({ data, onCreateCourse, onUpdateCourse, onAddMaterial, onAddAssessment, onCreateMemory, onMemoryDecision }: {
   data: Bootstrap;
   onCreateCourse: (payload: Record<string, unknown>) => Promise<void>;
   onUpdateCourse: (id: string, status: string, progress: number) => Promise<void>;
+  onAddMaterial: (id: string, payload: Record<string, unknown>) => Promise<void>;
+  onAddAssessment: (id: string, payload: Record<string, unknown>) => Promise<void>;
   onCreateMemory: (payload: Record<string, unknown>) => Promise<void>;
   onMemoryDecision: (id: string, status: "confirmed" | "disabled") => Promise<void>;
 }) {
@@ -1189,7 +1253,8 @@ function AegisHub({ data, onCreateCourse, onUpdateCourse, onCreateMemory, onMemo
     <div className="segmented-tabs hub-tabs">{(["identity", "academy", "voice", "learning"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</div>
     {tab === "identity" && <div className="hub-grid"><section className="panel"><PanelHeader icon={<Sparkles size={17} />} title="Digital identity" action={<StatusPill tone="safe">Owner controlled</StatusPill>} /><p>Professional, friendly, direct, factual, ambitious, and evidence-aware. Aegis never presents itself as human and never expands its own permissions.</p></section><section className="panel"><PanelHeader icon={<ShieldCheck size={17} />} title="Authority boundary" /><ul><li>Low-risk analysis and local organization may run directly.</li><li>External, sensitive, financial, publishing, and system-changing work requires approval.</li><li>Learning that changes authority is proposal-only and must pass evaluation.</li></ul></section></div>}
     {tab === "academy" && <div className="academy-layout"><form className="panel academy-form" onSubmit={submitCourse}><PanelHeader icon={<BrainCircuit size={17} />} title="Add a learning path" /><label>Course title<input required value={course.title} onChange={(event) => setCourse({ ...course, title: event.target.value })} placeholder="Course or subject" /></label><label>Provider<input required value={course.provider} onChange={(event) => setCourse({ ...course, provider: event.target.value })} placeholder="Coursera, edX, YouTube…" /></label><label>Public course link <span>optional</span><input value={course.source_url} onChange={(event) => setCourse({ ...course, source_url: event.target.value })} placeholder="Official or permitted course URL" /></label><label>Learning goal<textarea value={course.learning_goal} onChange={(event) => setCourse({ ...course, learning_goal: event.target.value })} placeholder="What should we be able to do after this?" /></label><button className="primary-button">Add to Academy</button><small>Credentials are not connected. Aegis stores only the course plan and public link until you approve an official integration.</small></form><section><div className="learning-cycle">Learn → Practice → Evaluate → Propose skill update → Approve → Release</div>{data.academy_courses.length === 0 ? <EmptyState icon={<BrainCircuit />} title="Academy is ready" body="Add a course and learn it with Aegis through notes, exercises, business applications, and review." /> : <div className="course-list">{data.academy_courses.map((item) => <article className="entity-card" key={item.id}><div className="entity-card__top"><StatusPill tone={item.status === "completed" ? "safe" : "neutral"}>{item.status}</StatusPill><span>{Math.round(item.progress)}%</span></div><h3>{item.title}</h3><p>{item.provider} · {item.learning_goal || "Goal not set"}</p><div className="progress-track"><i style={{ width: `${item.progress}%` }} /></div><footer>{item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">Official course <ArrowUpRight size={12} /></a> : <span>Local plan</span>}<button onClick={() => void onUpdateCourse(item.id, item.progress >= 100 ? "completed" : "active", Math.min(100, item.progress + 10))}>+10%</button></footer></article>)}</div>}</section></div>}
-    {tab === "voice" && <PrivateVoiceSession />}
+    {tab === "academy" && <AcademyEvidencePanel data={data} onAddMaterial={onAddMaterial} onAddAssessment={onAddAssessment} />}
+    {tab === "voice" && <PrivateVoiceSession status={data.voice} />}
     {tab === "learning" && <div className="learning-control"><form className="panel" onSubmit={submitPreference}><PanelHeader icon={<BrainCircuit size={17} />} title="Teach Aegis explicitly" /><p>Save a non-sensitive preference. Explicit presentation preferences apply directly; inferred or authority-changing changes remain proposals.</p><textarea value={preference} onChange={(event) => setPreference(event.target.value)} placeholder="Example: Give me a concise executive summary before technical detail." /><button className="primary-button" disabled={!preference.trim()}>Save preference</button></form><section className="memory-list">{data.learning_memory.length === 0 ? <EmptyState icon={<BrainCircuit />} title="No learned preferences yet" body="Aegis will keep each preference visible, editable, disableable, and attributable." /> : data.learning_memory.map((item) => <article className="entity-card" key={item.id}><div className="entity-card__top"><StatusPill tone={item.status === "confirmed" ? "safe" : item.status === "disabled" ? "neutral" : "warning"}>{item.status}</StatusPill><span>{item.kind} · {Math.round(item.confidence * 100)}%</span></div><h3>{item.category}</h3><p>{item.statement}</p><small>{item.reason}</small>{item.status === "proposed" && <footer><button onClick={() => void onMemoryDecision(item.id, "disabled")}>Disable</button><button onClick={() => void onMemoryDecision(item.id, "confirmed")}>Confirm</button></footer>}</article>)}</section></div>}
   </div>;
 }

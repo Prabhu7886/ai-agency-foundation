@@ -107,6 +107,14 @@ Start the FastAPI control plane and built interface on loopback only:
 python run_aegis.py
 ```
 
+Or start Aegis plus both independent agent supervision bridges with the guarded Windows launcher:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\windows\start_aegis_stack.ps1
+```
+
+The launcher reuses healthy listeners, starts missing processes hidden, and deliberately does not start Ollama. Ollama remains subject to the controlled-maintenance policy.
+
 Open `http://127.0.0.1:8000`. The workspace provides Executive Home, AI Workspace, Agent Fleet, World Pulse, Opportunity Engine, Solution Factory, Approval Center, Security Sentinel, Aegis Hub, and Data Lab. Aegis Hub contains the owner-controlled digital identity, private local voice, Aegis Academy course plans, and a visible controlled-learning ledger. Approval Center separates Security & Operations from Business & Creative decisions while preserving one single-use audit trail.
 
 Commerce and Career Studio remain independent applications. Start their authenticated loopback supervision bridges separately so Aegis can monitor them without owning their lifecycle:
@@ -115,9 +123,9 @@ Commerce and Career Studio remain independent applications. Start their authenti
 powershell -ExecutionPolicy Bypass -File tools\windows\start_agent_bridges.ps1
 ```
 
-Agent Fleet then displays sanitized health, progress, domain metrics, tasks, approvals, skills, incidents, containment, and learning history. It never imports resume content, customer records, credentials, or private task payloads. See `docs/AGENT_FLEET_OPERATIONS.md` for containment thresholds and the recovery drill.
+Agent Fleet then displays sanitized actual health, task outcomes and duration, progress, domain metrics, approvals, skills, incidents, containment drills, and learning history. It never imports resume content, customer records, credentials, or private task payloads. See `docs/AGENT_FLEET_OPERATIONS.md` for containment thresholds and the recovery drill.
 
-World Pulse organizes approved public research by niche and opens saved briefs in an internal reader. Opportunity Engine can hand a scored opportunity to Solution Factory, where every evidence-backed stage transition returns to Business & Creative approvals. External course-platform and social-media credentials remain disconnected until the owner explicitly approves an official integration.
+World Pulse organizes approved public research by niche, runs owner-configured schedules as approval requests, and searches approved public sources in dedicated lanes before opening saved briefs internally. Opportunity Engine can run recurring local discovery over stored evidence and hand a validation candidate to Solution Factory, where every evidence-backed transition returns to Business & Creative approvals. External course-platform and social-media credentials remain disconnected until the owner explicitly approves an official integration.
 
 Every executable user request passes through the Aegis prompt compiler first. Aegis keeps the original prompt, produces a bounded execution contract, classifies data and risk, states required approvals and success evidence, and never lets rewriting expand the user's authority. If Ollama is unavailable, a conservative deterministic compiler is used. AI chat routes each turn by content: Llama handles general executive conversation, DeepSeek Coder handles implementation work, and Qwen handles research, data, and strategic analysis. A one-model-at-a-time lock unloads the previous Ollama model before switching; models above the configured VRAM cap are labeled as hybrid GPU/RAM workloads in the interface.
 

@@ -119,6 +119,9 @@ class AgentBridgeClient:
     def rollback_learning(self, update_id: str, reason: str) -> dict[str, Any]:
         return self._request("POST", f"/v1/learning/{update_id}/rollback", {"reason": reason[:1000]})
 
+    def containment_drill(self) -> dict[str, Any]:
+        return self._request("POST", "/v1/drill/containment", {})
+
 
 class AgentFleetService:
     """Polls agents, detects abnormal behavior, contains risk, and distributes learning."""
@@ -351,6 +354,39 @@ class AgentFleetService:
         result = AgentBridgeClient(endpoint["bridge_url"], agent_id).control(action, capability, reason)
         self.store.record_agent_control(agent_id, action, capability, reason, source, "completed", result)
         return result
+
+    def run_containment_drill(self, agent_id: str) -> dict[str, Any]:
+        endpoint = next((item for item in self.store.list_agent_endpoints(False) if item["agent_id"] == agent_id), None)
+        if not endpoint:
+            raise KeyError("Independent agent is not registered")
+        drill = self.store.create_containment_drill(agent_id)
+        try:
+            result = AgentBridgeClient(endpoint["bridge_url"], agent_id).containment_drill()
+            passed = result.get("status") == "passed" and result.get("business_capabilities_touched") is False
+            report = {
+                **result,
+                "agent_id": agent_id,
+                "bridge": endpoint["bridge_url"],
+                "exercise_scope": "isolated diagnostic capability",
+                "production_task_executed": False,
+                "owner_recovery_gate_unchanged": True,
+            }
+            self.store.record_agent_control(
+                agent_id,
+                "containment_drill",
+                "diagnostic_drill",
+                "Authorized isolated containment and restoration exercise",
+                "owner",
+                "completed" if passed else "failed",
+                report,
+            )
+            return self.store.finish_containment_drill(drill["id"], "passed" if passed else "failed", report)
+        except Exception as exc:
+            return self.store.finish_containment_drill(
+                drill["id"],
+                "failed",
+                {"agent_id": agent_id, "error": str(exc)[:1000], "business_capabilities_touched": False},
+            )
 
     def evaluate_learning(self, payload: dict[str, Any]) -> dict[str, Any]:
         content = str(payload["content"])

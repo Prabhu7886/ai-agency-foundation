@@ -107,6 +107,22 @@ class WorldPulseScheduleCreate(BaseModel):
     cadence_hours: int = Field(ge=1, le=720)
 
 
+class WorldPulseScheduleUpdate(BaseModel):
+    status: Literal["planned", "paused"]
+
+
+class OpportunityCycleCreate(BaseModel):
+    name: str = Field(min_length=3, max_length=160)
+    niche: str = Field(min_length=2, max_length=80)
+    query: str = Field(min_length=3, max_length=500)
+    allocation: Literal["existing-80", "explore-20"] = "existing-80"
+    cadence_hours: int = Field(default=168, ge=1, le=720)
+
+
+class OpportunityCycleUpdate(BaseModel):
+    status: Literal["active", "paused"]
+
+
 class PluginChange(BaseModel):
     enabled: bool
 
@@ -195,6 +211,20 @@ class AcademyCourseCreate(BaseModel):
 class AcademyCourseUpdate(BaseModel):
     status: Literal["planned", "active", "completed", "paused"]
     progress: float = Field(ge=0, le=100)
+
+
+class AcademyMaterialCreate(BaseModel):
+    module_title: str = Field(min_length=3, max_length=300)
+    source_url: str | None = Field(default=None, max_length=1000)
+    content: str = Field(min_length=40, max_length=50_000)
+    owner_attested: bool = False
+
+
+class AcademyAssessmentCreate(BaseModel):
+    title: str = Field(min_length=3, max_length=300)
+    assessment_type: Literal["quiz", "exercise", "project"]
+    score: float = Field(ge=0, le=100)
+    evidence: dict[str, Any] = Field(default_factory=dict)
 
 
 class LearningMemoryCreate(BaseModel):

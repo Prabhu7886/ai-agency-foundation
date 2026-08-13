@@ -45,6 +45,7 @@ class FleetBridgeState:
             "controls": [],
             "learning_updates": [],
             "security_events": [],
+            "task_records": [],
             "updated_at": utc_now(),
         }
 
@@ -120,6 +121,69 @@ class FleetBridgeState:
         blocked = sorted(paused & requested)
         if blocked:
             raise FleetContainmentError(f"Aegis paused capability: {blocked[0]}")
+
+    def record_task_start(self, task_id: str, task_type: str) -> None:
+        state = self.load()
+        now = utc_now()
+        safe_id = safe_identifier(task_id)
+        records = [item for item in state.get("task_records", []) if item.get("task_id") != safe_id]
+        records.append({
+            "task_id": safe_id,
+            "task_type": safe_identifier(task_type),
+            "status": "running",
+            "created_at": now,
+            "updated_at": now,
+            "duration_ms": None,
+            "warning_count": 0,
+        })
+        state["task_records"] = records[-250:]
+        self.save(state)
+
+    def record_task_finish(self, task_id: str, status: str, duration_ms: int, warning_count: int = 0) -> None:
+        state = self.load()
+        safe_id = safe_identifier(task_id)
+        record = next((item for item in state.get("task_records", []) if item.get("task_id") == safe_id), None)
+        if record is None:
+            record = {
+                "task_id": safe_id,
+                "task_type": "unknown",
+                "created_at": utc_now(),
+            }
+            state.setdefault("task_records", []).append(record)
+        record.update({
+            "status": status if status in {"completed", "partial", "failed", "blocked"} else "failed",
+            "updated_at": utc_now(),
+            "duration_ms": max(0, int(duration_ms)),
+            "warning_count": max(0, int(warning_count)),
+        })
+        state["task_records"] = state.get("task_records", [])[-250:]
+        self.save(state)
+
+    def task_records(self, limit: int = 100) -> list[dict[str, Any]]:
+        return list(reversed(self.load().get("task_records", [])))[0:max(1, min(limit, 250))]
+
+    def run_containment_drill(self) -> dict[str, Any]:
+        """Exercise an isolated diagnostic capability and always restore it."""
+        capability = "diagnostic_drill"
+        blocked = False
+        restored = False
+        self.apply_control("pause_capability", capability, "Authorized non-business containment drill")
+        try:
+            try:
+                self.assert_task_allowed("diagnostic_task", [capability])
+            except FleetContainmentError:
+                blocked = True
+        finally:
+            self.apply_control("resume_capability", capability, "Containment drill cleanup")
+            restored = capability not in self.public_status()["paused_capabilities"]
+        return {
+            "status": "passed" if blocked and restored else "failed",
+            "capability": capability,
+            "blocked_while_paused": blocked,
+            "restored_after_drill": restored,
+            "business_capabilities_touched": False,
+            "completed_at": utc_now(),
+        }
 
     def deploy_learning(self, payload: dict[str, Any]) -> dict[str, Any]:
         content = str(payload.get("content", ""))
