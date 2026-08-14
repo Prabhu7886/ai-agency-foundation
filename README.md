@@ -113,6 +113,14 @@ Or start Aegis plus both independent agent supervision bridges with the guarded 
 powershell -ExecutionPolicy Bypass -File tools\windows\start_aegis_stack.ps1
 ```
 
+To start Aegis and both independent dashboards after a reboot, use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\windows\start_all_dashboards.ps1
+```
+
+The dashboards are available at `127.0.0.1:8000` (Aegis), `127.0.0.1:8501` (Commerce), and `127.0.0.1:8502` (Career Studio).
+
 The launcher reuses healthy listeners, starts missing processes hidden, and deliberately does not start Ollama. Ollama remains subject to the controlled-maintenance policy.
 
 Open `http://127.0.0.1:8000`. The workspace provides Executive Home, AI Workspace, Agent Fleet, World Pulse, Opportunity Engine, Solution Factory, Approval Center, Security Sentinel, Aegis Hub, and Data Lab. Aegis Hub contains the encrypted owner-controlled digital identity, locked portrait and full-body assets, consented single-frame screen understanding, a browser-animated avatar preview, private local voice, Aegis Academy course plans, and visible controlled-learning ledgers. AI Workspace includes private incognito turns that create no conversation, task, prompt, memory, or learning record. Response feedback becomes an encrypted training candidate and changes Aegis only after owner review. Approval Center separates Security & Operations from Business & Creative decisions while preserving one single-use audit trail.

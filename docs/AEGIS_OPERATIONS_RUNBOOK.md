@@ -1,18 +1,41 @@
 # Aegis MVP Operations Runbook
 
-Verified for Aegis 0.9.0 on 2026-08-12.
+Verified for Aegis 0.11.0 on 2026-08-14.
 
 ## Start and verify
 
-Run `tools\windows\start_aegis_stack.ps1`. It starts the Aegis loopback service with the virtual environment's no-console Python launcher and starts the Commerce and Career supervision bridges only when their ports are not already listening. It never starts Ollama or opens controlled maintenance.
+Run `tools\windows\start_all_dashboards.ps1`. It starts the Aegis loopback service, the Commerce and Career supervision bridges, and both independent Streamlit dashboards. Existing healthy services are reused. It never starts Ollama or opens controlled maintenance.
+
+Desktop access:
+
+- `Aegis Executive Dashboard` opens `http://127.0.0.1:8000/`.
+- `Aegis Commerce Dashboard` opens `http://127.0.0.1:8501/`.
+- `Aegis Career Studio Dashboard` opens `http://127.0.0.1:8502/`.
+- `Start All Aegis Dashboards` runs the bounded local launcher after a reboot.
 
 Verify these loopback endpoints:
 
 - Aegis: `http://127.0.0.1:8000/api/health`
+- Commerce dashboard: `http://127.0.0.1:8501/_stcore/health`
+- Career Studio dashboard: `http://127.0.0.1:8502/_stcore/health`
 - Commerce bridge: authenticated `http://127.0.0.1:8511/v1/snapshot`
 - Career bridge: authenticated `http://127.0.0.1:8512/v1/snapshot`
 
 Bridge endpoints require their local bearer tokens. Use the dashboard instead of exposing those tokens in command history.
+
+## Latest acceptance evidence
+
+Verified on 2026-08-14:
+
+- Aegis backend: 60 tests passed.
+- Commerce Agent: 23 tests passed; encrypted SQLCipher storage and 17 collections verified during launch.
+- Career Studio: 17 tests passed; the sidebar status-rendering defect was corrected and browser-retested.
+- Aegis frontend: TypeScript and production Vite build passed.
+- Browser acceptance: Aegis Executive Home, live Agent Fleet, Aegis Hub Companion, Commerce, and Career Studio rendered successfully.
+- Agent Fleet: Commerce and Career reported healthy through authenticated loopback Bridge v1.0.
+- Local vision: `gemma3:4b` completed a real image inference, discarded the raw frame, and unloaded after the request.
+- Ollama containment: both outbound-block rules enabled, no external Ollama connections, and no model left occupying VRAM after validation.
+- Desktop access: three dashboard shortcuts and one bounded all-dashboard launcher validated under the owner's Desktop folder.
 
 ## World Pulse schedules
 

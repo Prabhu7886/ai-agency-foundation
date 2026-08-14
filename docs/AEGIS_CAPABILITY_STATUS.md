@@ -1,6 +1,6 @@
 # Aegis Capability Status
 
-Last verified: 2026-08-13 · Aegis 0.11.0
+Last verified: 2026-08-14 - Aegis 0.11.0
 
 This document separates working software from foundations, placeholders, and future intent. A capability is not called operational unless it has an implemented path and verification evidence.
 
@@ -14,11 +14,11 @@ This document separates working software from foundations, placeholders, and fut
 | World Pulse | Approval-gated public research, owner-approved source lanes, recurring schedules, source quality, freshness evidence, confidence labels, niche filtering, and an internal brief reader | Schedules create approval requests; they never silently open a network session, and social posts are not treated as verified facts |
 | Opportunity Engine | Recurring local discovery over stored Pulse evidence, independent-domain checks, deduplication, conservative validation candidates, 80/20 allocation, and Solution Factory handoff | It does not claim demand or launch a business without customer validation and owner approval |
 | Solution Factory | Linked solution records and evidence-gated stage transitions | Does not yet run complete build, launch, revenue, or performance programs |
-| Aegis Hub | Encrypted owner-controlled identity profile, locked portrait and full-body assets, local single-frame screen analysis, browser motion states, incognito metadata policy, interruptible local voice states, Academy course plans, verified learning materials, assessments, completion gates, visible preference memory, and owner-reviewed response training candidates | Vision requires local `gemma3:4b` (currently blocked pending controlled maintenance); raw frames are never retained; phoneme lip sync and course credentials are not connected |
+| Aegis Hub | Encrypted owner-controlled identity profile, locked portrait and full-body assets, operational local single-frame screen analysis, browser motion states, incognito metadata policy, interruptible local voice states, Academy course plans, verified learning materials, assessments, completion gates, visible preference memory, and owner-reviewed response training candidates | `gemma3:4b` is installed and locally verified; raw frames are never retained; phoneme lip sync and course credentials are not connected |
 | Agent Fleet | Authenticated local bridges for independent Commerce and Career runtimes; actual runtime health, encrypted task timing/outcomes, 30-second monitoring, incident reports, isolated containment drills, capability-level containment, approval-gated recovery, and hashed learning deployment/rollback | Monitoring runs while Aegis is online; private payloads never cross the bridge; agents continue independently when Aegis is offline |
 | Data Lab | Reversible CSV cleaning plans and approved clean-copy execution | Current operations are bounded to trimming, null normalization, and deduplication |
 | Security Sentinel | Foundation status, secret-pattern scanning, risky-code checks, dependency posture, encrypted-backup approval flow, manifest verification, and non-destructive restore drills | A successful drill proves the selected backup can be decrypted and hash-verified; it is not a full disaster-recovery guarantee |
-| Workspace operations | Dashboard-wide local search, hidden stack launcher, operations status, and controlled backup/recovery actions | The launcher does not auto-start Ollama and the application remains loopback-only |
+| Workspace operations | Dashboard-wide local search, hidden stack launcher, all-dashboard launcher, operations status, and controlled backup/recovery actions | The launchers do not auto-start Ollama and every application remains loopback-only |
 
 ## Not operational yet
 

@@ -1,6 +1,6 @@
 # Aegis Digital Identity Contract
 
-Last verified: 2026-08-13 · Aegis 0.11.0
+Last verified: 2026-08-14 - Aegis 0.11.0
 
 ## Approved identity
 
@@ -61,7 +61,7 @@ Browser-only live preview
                     +-- proposed learning candidate requiring review
 ```
 
-The current release implements bounded local screen understanding with the configured `gemma3:4b` Ollama model. Availability remains false until that model is installed. The owner must start a screen-enabled companion session, grant browser permission, optionally crop private edges, capture one visible frame, and click Analyze. The frame is downscaled in the browser, limited to 1.5 MB, validated by media signature, sent only to the loopback API, processed in memory, and discarded. Aegis never samples automatically. Only the returned text can be saved, and private incognito blocks that save.
+The current release implements bounded local screen understanding with the configured `gemma3:4b` Ollama model. The model was installed through controlled maintenance and verified locally on 2026-08-14 with outbound blocking restored before inference. The owner must start a screen-enabled companion session, grant browser permission, optionally crop private edges, capture one visible frame, and click Analyze. The frame is downscaled in the browser, limited to 1.5 MB, validated by media signature, sent only to the loopback API, processed in memory, and discarded. Aegis never samples automatically. Only the returned text can be saved, and private incognito blocks that save.
 
 ## Conversation improvement
 
@@ -90,7 +90,6 @@ The local model now receives the encrypted identity profile and confirmed non-au
 
 - OpenAI API and Smart Hybrid routing are deliberately deferred until the owner can complete Platform authentication.
 - Offline motion rendering, repeatable phoneme lip sync, and reusable video poses.
-- Local vision analysis for consented screen sessions.
 - Public identity accounts and publishing adapters.
 - Full conversational feedback/evaluation dataset and model fine-tuning.
 
