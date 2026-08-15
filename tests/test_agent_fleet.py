@@ -10,6 +10,7 @@ from aegis_core.agent_fleet import AgentFleetService
 from aegis_core.store import AegisStore
 from agents.fleet_bridge_state import FleetBridgeState, FleetContainmentError
 from databases.setup_databases import DatabaseSetup
+from tools.agent_bridge_server import bridge_master_key
 
 
 @pytest.fixture()
@@ -19,6 +20,17 @@ def fleet_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AegisStore:
     repository = AegisStore(DatabaseSetup(tmp_path / "databases" / "fleet.db"))
     repository.initialize()
     return repository
+
+
+def test_bridge_auth_key_is_separate_from_agent_data_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    agent_key = base64.urlsafe_b64encode(b"a" * 32).decode()
+    supervisor_key = base64.urlsafe_b64encode(b"s" * 32).decode()
+    supervisor_env = tmp_path / "supervisor.env"
+    supervisor_env.write_text(f"AI_AGENCY_MASTER_KEY={supervisor_key}\n", encoding="utf-8")
+    monkeypatch.setenv("AI_AGENCY_MASTER_KEY", agent_key)
+    monkeypatch.setenv("AEGIS_BRIDGE_AUTH_ENV_PATH", str(supervisor_env))
+
+    assert bridge_master_key() == b"s" * 32
 
 
 def test_bridge_state_encrypts_containment_and_learning(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

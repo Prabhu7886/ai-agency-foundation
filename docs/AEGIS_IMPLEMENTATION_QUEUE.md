@@ -11,8 +11,8 @@ The queue follows the approved order. Only one major workstream should be marked
 | 4 | Aegis Academy expansion | COMPLETE | Verified materials and passed assessments gate course completion and learning proposals | Encrypted persistence, evidence/assessment tests, existing eval and rollback path |
 | 5 | AI feedback and controlled learning | COMPLETE | Explicit feedback and completed-course learning remain visible and reversible | No silent authority changes; major updates remain approval-gated |
 | 6 | Voice and avatar upgrade | COMPLETE FOR MVP | Local processing/speaking states, interruption, fallback, and raw-audio deletion | Local-only service controls and dashboard state surface |
-| 7 | Platform completion and hardening | COMPLETE FOR MVP | Search, encrypted backup approvals, restore drills, stack startup, all-dashboard launcher, Desktop access, and operations status | Production build, 60 backend tests, 23 Commerce tests, 17 Career tests, browser acceptance, and operations runbook |
-| 8 | Digital identity control plane | COMPLETE FOR LOCAL MVP | Encrypted identity profile, locked portrait/full-body registry, consented companion sessions, and private incognito chat | 60 backend tests, TypeScript validation, production build, local vision inference, and digital identity contract |
+| 7 | Platform completion and hardening | COMPLETE FOR MVP | Search, encrypted backup approvals, restore drills, stack startup, isolated agent runtimes, all-dashboard launcher, Desktop access, and operations status | Production build, 61 backend tests, 23 Commerce tests, 17 Career tests, browser acceptance, and operations runbook |
+| 8 | Digital identity control plane | COMPLETE FOR LOCAL MVP | Encrypted identity profile, global Executive Partner popup, locked portrait/full-body registry, consented companion sessions, and private incognito chat | 61 backend tests, TypeScript validation, production build, local vision inference, and digital identity contract |
 | 9 | Smart Hybrid API conversation | DEFERRED BY OWNER | Secure Platform key, $10 hard budget, public/sanitized routing, feedback ledger, and local fallback | Resume only after owner can authenticate to OpenAI Platform |
 | 10 | Local screen understanding | COMPLETE FOR LOCAL MVP | One owner-triggered frame, optional edge crop, loopback-only in-memory vision, zero raw retention | `gemma3:4b` installed through controlled maintenance; local visual inference passed; model unloaded after use; outbound blocking restored |
 | 11 | Conversational learning | IMPLEMENTED | Natural low-risk prompt wrapper, encrypted ratings/corrections, owner-reviewed training candidates | Collect real owner feedback; do not fine-tune automatically |
@@ -22,7 +22,7 @@ The queue follows the approved order. Only one major workstream should be marked
 
 | Priority | Workstream | State | Next completion gate |
 |---:|---|---|---|
-| 1 | Unified futuristic interface and owner-directed Design Edit Mode | COMPLETE FOR LOCAL MVP | Continue real-use feedback; every selected-region change remains rewritten and approval-gated |
+| 1 | Decision-first interface system and owner-directed Design Edit Mode | COMPLETE FOR LOCAL MVP | Continue real-use feedback; every selected-region change remains rewritten and approval-gated |
 | 2 | Business iPhone notification channel | NEXT | Connect the dedicated phone, choose the first channel, verify device ownership, and test outbound-only alerts before interactive approvals |
 | 3 | Independent-agent GitHub and restart hardening | QUEUED | Preserve Commerce and Career on independent branches, add managed lifecycle evidence, and pass reboot/reconnection drills |
 | 4 | Aegis conversational evaluation and training records | QUEUED | Collect representative owner ratings, corrections, and regression prompts before any fine-tuning decision |

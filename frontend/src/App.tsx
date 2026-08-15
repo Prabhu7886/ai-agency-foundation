@@ -129,6 +129,19 @@ const workspaceIcons: Record<string, ReactNode> = {
   "data-lab": <Database size={17} />,
 };
 
+const workspaceDisplayLabels: Record<string, string> = {
+  "executive-home": "Executive Home",
+  "ai-workspace": "AI Workspace",
+  "agent-fleet": "Mission Control",
+  "world-pulse": "World Pulse",
+  "opportunity-engine": "Opportunity Engine",
+  "solution-factory": "Solution Factory",
+  "approval-center": "Approval Center",
+  "security-sentinel": "Security Sentinel",
+  "aegis-hub": "Aegis Hub",
+  "data-lab": "Data Lab",
+};
+
 function timeAgo(value: string) {
   const elapsed = Math.max(0, Date.now() - new Date(value).getTime());
   const minutes = Math.floor(elapsed / 60000);
@@ -172,6 +185,7 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [codexLogin, setCodexLogin] = useState<{ verificationUrl: string; userCode: string } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [executivePartnerOpen, setExecutivePartnerOpen] = useState(false);
   const [designMode, setDesignMode] = useState(false);
   const [designSelection, setDesignSelection] = useState<{ label: string; region: string; workspace: string } | null>(null);
   const selectedDesignElement = useRef<HTMLElement | null>(null);
@@ -354,7 +368,7 @@ export default function App() {
               onClick={() => setActiveWorkspace(item.id)}
               title={item.label}
             >
-              {workspaceIcons[item.id]} <span>{item.label}</span>
+              {workspaceIcons[item.id]} <span>{workspaceDisplayLabels[item.id] ?? item.label}</span>
               {item.id === "approval-center" && data.overview.pending_approvals > 0 && (
                 <b>{data.overview.pending_approvals}</b>
               )}
@@ -393,11 +407,15 @@ export default function App() {
           <button className="icon-button mobile-menu" onClick={() => setSidebarOpen((value) => !value)}><Menu size={18} /></button>
           <div>
             <div className="eyebrow">AEGIS / {selectedProject?.name ?? "NO PROJECT"}</div>
-            <h1>{workspace?.label}</h1>
+            <h1>{workspaceDisplayLabels[activeWorkspace] ?? workspace?.label}</h1>
           </div>
           <div className="topbar__actions">
             <StatusPill tone="safe"><LockKeyhole size={12} /> Local only</StatusPill>
             <button className="icon-button" title="Search this workspace" onClick={() => setSearchOpen(true)}><Search size={17} /></button>
+            <button className="executive-partner-trigger" onClick={() => setExecutivePartnerOpen(true)} title="Open Aegis Executive Partner">
+              <span className="executive-partner-trigger__avatar"><img src="/aegis-avatar.png" alt="" /><i /></span>
+              <span><strong>Executive Partner</strong><small>Ask · observe · learn</small></span>
+            </button>
             <button
               className={`design-mode-toggle ${designMode ? "active" : ""}`}
               data-design-editor
@@ -425,6 +443,7 @@ export default function App() {
                 await refresh(true);
                 return status;
               }}
+              onNavigate={setActiveWorkspace}
             />
           )}
           {activeWorkspace === "ai-workspace" && <AIWorkspace project={selectedProject} conversations={data.conversations} onRefresh={() => refresh(true)} />}
@@ -527,6 +546,20 @@ export default function App() {
         </div>
       )}
       {searchOpen && <WorkspaceSearch onClose={() => setSearchOpen(false)} />}
+      {executivePartnerOpen && (
+        <ExecutivePartnerPopup
+          data={data}
+          project={selectedProject}
+          onClose={() => setExecutivePartnerOpen(false)}
+          onOpenWorkspace={(workspaceId) => {
+            setActiveWorkspace(workspaceId);
+            setExecutivePartnerOpen(false);
+          }}
+          onStartSession={(payload) => mutate(() => startCompanionSession(payload), "Executive Partner session started")}
+          onAddSessionNote={(id, payload) => mutate(() => addCompanionNote(id, payload), "Observation note saved locally")}
+          onFinishSession={(id, status, summary) => mutate(() => finishCompanionSession(id, status, summary), `Executive Partner session ${status}`)}
+        />
+      )}
       {toast && <div className="toast"><Check size={16} />{toast}</div>}
     </div>
   );
@@ -543,6 +576,7 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [feedbackByMessage, setFeedbackByMessage] = useState<Record<string, string>>({});
   const [privateIncognito, setPrivateIncognito] = useState(false);
+  const [workspaceMode, setWorkspaceMode] = useState<"chat" | "research" | "code" | "learn">("chat");
   const conversationEnd = useRef<HTMLDivElement | null>(null);
   const skipNextConversationLoad = useRef(false);
   const allProjectConversations = useMemo(
@@ -755,7 +789,7 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
   return <div className="ai-workspace ai-workspace--threads">
     <aside className="ai-thread-sidebar"><header><div>{showArchived ? <Archive size={15} /> : <MessageSquareText size={15} />}<strong>{showArchived ? "Archived" : "Conversations"}</strong></div><button title="New encrypted chat" onClick={newChat}><Plus size={15} /></button></header><div className="ai-thread-list">{displayedConversations.length === 0 ? <p>{showArchived ? "No archived conversations." : "No saved conversations yet."}</p> : displayedConversations.map((item) => <button className={`${item.id === selectedConversationId ? "active" : ""} ${item.status === "archived" ? "archived" : ""}`} key={item.id} onClick={() => setSelectedConversationId(item.id)}><strong>{item.title}</strong><span>{item.message_count} messages · {timeAgo(item.updated_at)}</span><small>{item.preview || "Encrypted local conversation"}</small></button>)}</div><footer><div><LockKeyhole size={12} /> SQLCipher encrypted</div><button className={showArchived ? "active" : ""} onClick={() => { const nextMode = !showArchived; const nextItems = nextMode ? archivedConversations : projectConversations; setShowArchived(nextMode); setSelectedConversationId(nextItems[0]?.id ?? null); setMessages([]); }}><Archive size={11} /> {archivedConversations.length}</button></footer></aside>
     <div className="ai-chat-main">
-      <header className="ai-workspace__header"><div><div className="eyebrow"><BrainCircuit size={13} /> AEGIS CONVERSATION</div><h2>{privateIncognito ? "Private incognito" : currentConversation?.title ?? project?.name ?? "AI Workspace"}</h2><p>{privateIncognito ? "Local-only ephemeral conversation. Nothing from this turn is saved or learned." : "Streaming local reasoning with bounded encrypted history."}</p></div><div className="ai-chat-controls"><StatusPill tone={privateIncognito ? "warning" : "safe"}>{privateIncognito ? "No history · No learning · No cloud" : "Auto-route · Llama / DeepSeek / Qwen"}</StatusPill><button className={`chat-utility ${privateIncognito ? "active" : ""}`} disabled={sending} onClick={toggleIncognito}><LockKeyhole size={14} /> {privateIncognito ? "Exit incognito" : "Incognito"}</button>{!privateIncognito && (currentConversation?.status === "archived" ? <><button className="chat-utility" onClick={() => void restoreCurrent()}><ArchiveRestore size={14} /> Restore</button><button className="chat-utility chat-utility--danger" onClick={() => void deleteCurrent()}><Trash2 size={14} /> Delete</button></> : selectedConversationId ? <button className="chat-utility" disabled={sending} onClick={() => void archiveCurrent()}><Archive size={14} /> Archive</button> : null)}{!privateIncognito && <button className="chat-utility" disabled={sending} onClick={newChat}><Plus size={14} /> New chat</button>}</div></header>
+      <header className="ai-workspace__header"><div><div className="eyebrow"><BrainCircuit size={13} /> AEGIS WORKSPACE</div><h2>{privateIncognito ? "Private incognito" : currentConversation?.title ?? project?.name ?? "AI Workspace"}</h2><p>{privateIncognito ? "Local-only ephemeral conversation. Nothing from this turn is saved or learned." : "Think, research, build, and learn with project context."}</p><div className="ai-workspace-modes">{(["chat", "research", "code", "learn"] as const).map((mode) => <button key={mode} className={workspaceMode === mode ? "active" : ""} onClick={() => setWorkspaceMode(mode)}>{mode === "chat" ? <MessageSquareText size={13} /> : mode === "research" ? <Search size={13} /> : mode === "code" ? <Code2 size={13} /> : <BrainCircuit size={13} />}{mode}</button>)}</div></div><div className="ai-chat-controls"><StatusPill tone={privateIncognito ? "warning" : "safe"}>{privateIncognito ? "No history · No learning · No cloud" : "Auto-route · Llama / DeepSeek / Qwen"}</StatusPill><button className={`chat-utility ${privateIncognito ? "active" : ""}`} disabled={sending} onClick={toggleIncognito}><LockKeyhole size={14} /> {privateIncognito ? "Exit incognito" : "Incognito"}</button>{!privateIncognito && (currentConversation?.status === "archived" ? <><button className="chat-utility" onClick={() => void restoreCurrent()}><ArchiveRestore size={14} /> Restore</button><button className="chat-utility chat-utility--danger" onClick={() => void deleteCurrent()}><Trash2 size={14} /> Delete</button></> : selectedConversationId ? <button className="chat-utility" disabled={sending} onClick={() => void archiveCurrent()}><Archive size={14} /> Archive</button> : null)}{!privateIncognito && <button className="chat-utility" disabled={sending} onClick={newChat}><Plus size={14} /> New chat</button>}</div></header>
       <section className="ai-conversation">
         {loadingConversation ? <div className="ai-message ai-message--aegis ai-message--thinking"><div className="ai-avatar ai-avatar--aegis"><BrainCircuit size={14} /></div><div><span>Aegis</span><div className="ai-thinking"><i /><i /><i /> Decrypting local conversation…</div></div></div> : messages.length === 0 ? <div className="ai-welcome"><div className="ai-welcome__mark"><BrainCircuit size={30} /></div><h3>{privateIncognito ? "A private room with Aegis" : "What are we building?"}</h3><p>{privateIncognito ? "This session stays local and ephemeral. It creates no conversation, task, memory, or learning record; only the text visible on this screen exists until you leave." : "Discuss an idea, analyze a market, make a plan, or prepare a coding task. Every turn is rewritten into a bounded execution contract, routed to the best local specialist, and saved only in the encrypted local database."}</p><div className="model-route-grid"><span>Llama<small>General</small></span><span>DeepSeek<small>Coding</small></span><span>Qwen<small>Research · analysis</small></span></div><div className="ai-starters">{["Turn my idea into a practical plan", "Analyze a business opportunity", "Help me design a secure feature"].map((starter) => <button key={starter} onClick={() => setMessage(starter)}>{starter}<ChevronRight size={13} /></button>)}</div></div> : messages.map((item) => <article className="ai-turn" key={item.id}>
           <div className={`ai-message ${item.role === "user" ? "ai-message--owner" : "ai-message--aegis"}`}><div className={`ai-avatar ${item.role === "user" ? "ai-avatar--owner" : "ai-avatar--aegis"}`}>{item.role === "user" ? "S" : <BrainCircuit size={14} />}</div><div className={item.role === "assistant" ? "ai-response" : ""}><span>{item.role === "user" ? "You" : "Aegis"} · {item.model ?? item.provider ?? "local"} · {new Date(item.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>{item.content ? <p>{item.content}{item.streaming && <i className="stream-cursor" />}</p> : item.streaming ? <div className="ai-thinking"><i /><i /><i /> {streamStatus || "Thinking locally…"}</div> : null}{item.error && <small>{item.error}</small>}{item.role === "assistant" && item.content && <div className="ai-message-actions"><button onClick={() => void copyAnswer(item)} title="Copy response">{copiedId === item.id ? <Check size={13} /> : <Copy size={13} />} {copiedId === item.id ? "Copied" : "Copy"}</button>{!privateIncognito && !item.streaming && <><button className={feedbackByMessage[item.id] === "helpful" ? "active" : ""} onClick={() => void rateAnswer(item, "helpful")}><ThumbsUp size={12} /> Helpful</button><button className={feedbackByMessage[item.id] === "too_generic" ? "active" : ""} onClick={() => void rateAnswer(item, "too_generic")}>Too generic</button><button className={feedbackByMessage[item.id] === "incorrect" ? "active" : ""} onClick={() => void rateAnswer(item, "incorrect")}>Incorrect</button><button className={feedbackByMessage[item.id] === "missed_intent" ? "active" : ""} onClick={() => void rateAnswer(item, "missed_intent")}>Missed intent</button></>}</div>}</div></div>
@@ -764,12 +798,12 @@ function AIWorkspace({ project, conversations, onRefresh }: { project: Project |
         {streamStatus && !sending && <div className="ai-stream-status">{streamStatus}</div>}
         <div ref={conversationEnd} />
       </section>
-      {currentConversation?.status === "archived" && !privateIncognito ? <div className="ai-archived-actions"><Archive size={15} /><span>This encrypted conversation is read-only.</span><button onClick={() => void restoreCurrent()}><ArchiveRestore size={14} /> Restore conversation</button></div> : <div className="ai-composer-dock">{messages.length > 0 && <button className="regenerate-button" disabled={sending} onClick={() => void regenerate()}><RotateCcw size={13} /> Regenerate last response</button>}<form className="ai-composer" onSubmit={submit}><textarea rows={2} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={handleKeyDown} placeholder="Message Aegis…" /><footer><div><LockKeyhole size={13} /> {privateIncognito ? "Ephemeral · Local only · No memory" : "Encrypted history · Live local tokens · Enter to send"}</div><button aria-label="Send message" disabled={!message.trim() || !project || sending}><Send size={16} /></button></footer></form><small className="ai-disclaimer">Aegis can make mistakes. Verify important business, security, and financial decisions.</small></div>}
+      {currentConversation?.status === "archived" && !privateIncognito ? <div className="ai-archived-actions"><Archive size={15} /><span>This encrypted conversation is read-only.</span><button onClick={() => void restoreCurrent()}><ArchiveRestore size={14} /> Restore conversation</button></div> : <div className="ai-composer-dock">{messages.length > 0 && <button className="regenerate-button" disabled={sending} onClick={() => void regenerate()}><RotateCcw size={13} /> Regenerate last response</button>}<form className="ai-composer" onSubmit={submit}><textarea rows={2} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={handleKeyDown} placeholder={workspaceMode === "research" ? "Research a question with current, cited evidence…" : workspaceMode === "code" ? "Describe what you want to build, inspect, or fix…" : workspaceMode === "learn" ? "What do you want to learn or practice with Aegis?" : "Message Aegis…"} /><footer><div><LockKeyhole size={13} /> {privateIncognito ? "Ephemeral · Local only · No memory" : `${workspaceMode} mode · prompt rewritten before execution`}</div><button aria-label="Send message" disabled={!message.trim() || !project || sending}><Send size={16} /></button></footer></form><small className="ai-disclaimer">Aegis can make mistakes. Verify important business, security, and financial decisions.</small></div>}
     </div>
   </div>;
 }
 
-function ExecutiveHome({ data, project, onChat, onGitHub, onCodexLogin, onCodexTask, onCodexCheck }: {
+function ExecutiveHome({ data, project, onChat, onGitHub, onCodexLogin, onCodexTask, onCodexCheck, onNavigate }: {
   data: Bootstrap;
   project: Project | null;
   onChat: (message: string) => Promise<void>;
@@ -777,6 +811,7 @@ function ExecutiveHome({ data, project, onChat, onGitHub, onCodexLogin, onCodexT
   onCodexLogin: () => Promise<void>;
   onCodexTask: (message: string) => Promise<void>;
   onCodexCheck: () => Promise<CodexStatus>;
+  onNavigate: (workspaceId: string) => void;
 }) {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
@@ -794,87 +829,48 @@ function ExecutiveHome({ data, project, onChat, onGitHub, onCodexLogin, onCodexT
     if (!completed?.execution?.result_summary) return null;
     try { return JSON.parse(completed.execution.result_summary) as GitHubGovernance; } catch { return null; }
   }, [data.approvals]);
+  const pendingApprovals = data.approvals.filter((item) => item.status === "pending");
+  const openIncidents = data.agent_incidents.filter((item) => item.status !== "resolved");
+  const currentOpportunity = data.opportunities[0] as Record<string, unknown> | undefined;
+  const projectTasks = project?.tasks ?? [];
+  const greeting = new Date().getHours() < 12 ? "Good morning" : new Date().getHours() < 18 ? "Good afternoon" : "Good evening";
   return (
-    <div className="dashboard-grid">
-      <section className="hero-card span-8">
-        <div className="hero-card__glow" />
-        <div className="eyebrow"><Sparkles size={13} /> EXECUTIVE SIGNAL</div>
-        <h2>See clearly.<br /><span>Act decisively.</span></h2>
-        <p>{data.brand.creed}</p>
-        <div className="hero-card__status"><span className="live-dot" /> Foundation controls inherited · Cloud private data blocked</div>
-      </section>
-      <section className="metric-stack span-4">
-        <Metric label="Active projects" value={data.overview.projects} icon={<FolderGit2 />} />
-        <Metric label="Ready agents" value={data.overview.agents} icon={<Bot />} />
-        <Metric label="Pending decisions" value={data.overview.pending_approvals} icon={<UserRoundCheck />} accent />
-        <Metric label="Open tasks" value={data.overview.open_tasks} icon={<Workflow />} />
+    <div className="executive-home">
+      <section className="executive-briefing" data-design-region="executive briefing">
+        <div className="executive-briefing__identity"><span className="executive-avatar"><img src="/aegis-avatar.png" alt="Aegis" /><i /></span><div><div className="eyebrow">PRIVATE EXECUTIVE BRIEFING · {new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</div><h2>{greeting}, Saif.</h2><p>{pendingApprovals.length || openIncidents.length ? `You have ${pendingApprovals.length + openIncidents.length} item${pendingApprovals.length + openIncidents.length === 1 ? "" : "s"} that need a decision. Everything else is operating normally.` : "Nothing urgent is blocking you. Your systems are running quietly and the next useful work is ready."}</p></div></div>
+        <div className="executive-briefing__controls"><StatusPill tone="safe"><LockKeyhole size={12} /> Local & private</StatusPill><button className="primary-button" onClick={() => onNavigate("ai-workspace")}><MessageSquareText size={15} /> Discuss with Aegis</button></div>
       </section>
 
-      <section className="panel span-8 project-room">
-        <PanelHeader icon={<FolderGit2 size={17} />} title={project?.name ?? "Select a project"} action={<StatusPill tone="safe">Registered workspace</StatusPill>} />
-        {project ? (
-          <>
-            <p className="muted project-description">{project.description}</p>
-            <div className="project-meta"><code>{project.root_path}</code>{project.repository_url && <a href={project.repository_url} target="_blank" rel="noreferrer">GitHub <ArrowUpRight size={12} /></a>}</div>
-            <div className="task-thread-list">
-              {(project.tasks ?? []).length ? project.tasks!.slice(0, 5).map((task) => (
-                <div className="task-thread" key={task.id}>
-                  <div className={`task-state task-state--${task.status}`}><MessageSquareText size={15} /></div>
-                  <div className="task-copy">
-                    <strong>{task.title}</strong>
-                    <small>{task.assigned_agent ?? "Aegis"} · {timeAgo(task.updated_at)}</small>
-                    {task.prompt_compilation && (
-                      <details className="prompt-contract">
-                        <summary><Sparkles size={11} /> Prompt compiled · {task.prompt_compilation.risk_level} risk</summary>
-                        <div>
-                          <label>Original request</label>
-                          <p>{task.prompt_compilation.original_prompt}</p>
-                          <label>Execution contract</label>
-                          <pre>{task.prompt_compilation.compiled_prompt}</pre>
-                          <footer>
-                            <span>{task.prompt_compilation.compiler_mode}</span>
-                            <span>{task.prompt_compilation.data_classification}</span>
-                          </footer>
-                        </div>
-                      </details>
-                    )}
-                    {task.result_summary && <p className="task-result">{task.result_summary}</p>}
-                  </div>
-                  <StatusPill tone={task.status === "completed" ? "safe" : task.status === "failed" ? "danger" : "neutral"}>{task.status}</StatusPill>
-                </div>
-              )) : <EmptyState icon={<MessageSquareText />} title="Start the first task" body="Discuss, plan, or build inside this registered project." />}
+      <section className="executive-home__grid">
+        <div className="executive-home__main">
+          <section className="executive-section attention-section" data-design-region="needs your attention">
+            <PanelHeader icon={<Zap size={17} />} title="Needs your attention" action={<StatusPill tone={pendingApprovals.length || openIncidents.length ? "warning" : "safe"}>{pendingApprovals.length + openIncidents.length} open</StatusPill>} />
+            <div className="attention-list">
+              {pendingApprovals.slice(0, 3).map((item) => <article className="attention-item attention-item--approval" key={item.id}><span className="attention-icon"><UserRoundCheck size={18} /></span><div><small>{item.approval_queue === "business_creative" ? "Business approval" : "System approval"} · {item.risk_level} risk</small><h3>{item.summary}</h3><p>Aegis has prepared the scope and evidence for your decision.</p></div><button onClick={() => onNavigate("approval-center")}>Review</button></article>)}
+              {openIncidents.slice(0, 2).map((item) => <article className="attention-item attention-item--warning" key={item.id}><span className="attention-icon"><ShieldCheck size={18} /></span><div><small>Agent warning · {item.severity}</small><h3>{item.title}</h3><p>{item.report.summary ?? "Aegis contained the issue and prepared recovery options."}</p></div><button onClick={() => onNavigate("agent-fleet")}>Open agent</button></article>)}
+              {currentOpportunity && <article className="attention-item attention-item--opportunity"><span className="attention-icon"><Target size={18} /></span><div><small>Market opportunity</small><h3>{String(currentOpportunity.title ?? currentOpportunity.name ?? "Evidence-backed opportunity")}</h3><p>{String(currentOpportunity.summary ?? currentOpportunity.description ?? "Review the supporting evidence and decide whether to develop a proposal.")}</p></div><button onClick={() => onNavigate("opportunity-engine")}>View opportunity</button></article>}
+              {!pendingApprovals.length && !openIncidents.length && !currentOpportunity && <EmptyState icon={<Check />} title="You are clear" body="Aegis will bring approvals, warnings, and supported opportunities here when they matter." />}
             </div>
-            <form className="command-composer" onSubmit={submit}>
-              <textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Ask Aegis to analyze, plan, or build…" rows={2} />
-              <div><span><LockKeyhole size={13} /> Local model first</span><button aria-label="Send to Aegis" disabled={sending || !message.trim()}><Send size={16} /></button></div>
-            </form>
-          </>
-        ) : <EmptyState icon={<FolderGit2 />} title="No project selected" body="Create a project workspace to begin." />}
+          </section>
+
+          <section className="executive-section world-briefing" data-design-region="world pulse briefing">
+            <PanelHeader icon={<Globe2 size={17} />} title="World Pulse" action={<button className="text-action" onClick={() => onNavigate("world-pulse")}>Open intelligence <ChevronRight size={14} /></button>} />
+            {data.world_pulse.length ? <div className="world-briefing__list">{data.world_pulse.slice(0, 4).map((item, index) => <article key={item.id ?? index}><div><StatusPill tone={item.verification_state === "verified" ? "safe" : "neutral"}>{item.category ?? "Briefing"}</StatusPill><span>{Math.round(item.confidence * 100)}% confidence</span></div><h3>{item.headline}</h3><p>{item.summary}</p>{item.source_url && <a href={item.source_url} target="_blank" rel="noreferrer">{item.domain ?? "Open source"} <ArrowUpRight size={12} /></a>}</article>)}</div> : <EmptyState icon={<Globe2 />} title="No unverified headlines" body="Run approved research to build a source-backed executive briefing." action={<button className="secondary-button" onClick={() => onNavigate("world-pulse")}>Start research</button>} />}
+          </section>
+        </div>
+
+        <aside className="executive-home__rail">
+          <section className="executive-section fleet-strip" data-design-region="agent fleet summary"><PanelHeader icon={<Network size={17} />} title="Agent Fleet" action={<button className="text-action" onClick={() => onNavigate("agent-fleet")}>Mission Control <ChevronRight size={14} /></button>} /><div className="fleet-strip__list">{data.agent_fleet.length ? data.agent_fleet.slice(0, 5).map((agent) => { const health = agent.snapshot.health?.status ?? agent.snapshot.health?.state ?? agent.bridge.last_status; const healthy = ["healthy", "ok", "connected", "ready"].includes(String(health).toLowerCase()); return <article key={agent.id}><span className={`fleet-agent-mark ${healthy ? "healthy" : "attention"}`}><Bot size={16} /></span><div><strong>{agent.name}</strong><small>{agent.role}</small></div><StatusPill tone={healthy ? "safe" : "warning"}>{String(health).replaceAll("_", " ")}</StatusPill></article>; }) : <p className="muted">Independent agents will appear here after connection.</p>}</div></section>
+
+          <section className="executive-section today-section" data-design-region="today priorities"><PanelHeader icon={<Workflow size={17} />} title="Today" action={<StatusPill>{project?.name ?? "No project"}</StatusPill>} /><div className="today-list">{projectTasks.length ? projectTasks.slice(0, 5).map((task) => <article key={task.id}><span className={`today-check today-check--${task.status}`}>{task.status === "completed" ? <Check size={13} /> : <CircleGauge size={13} />}</span><div><strong>{task.title}</strong><small>{task.assigned_agent ?? "Aegis"} · {relativeTime(task.updated_at)}</small></div></article>) : <p className="muted">No project tasks are waiting.</p>}</div><button className="secondary-button full-width" onClick={() => onNavigate("ai-workspace")}>Continue in workspace</button></section>
+
+          <section className="executive-section quick-actions" data-design-region="quick actions"><PanelHeader icon={<Sparkles size={17} />} title="Quick actions" /><button onClick={() => onNavigate("ai-workspace")}><MessageSquareText size={16} /><span><strong>Discuss</strong><small>Think with Aegis</small></span><ChevronRight size={14} /></button><button onClick={() => onNavigate("approval-center")}><UserRoundCheck size={16} /><span><strong>Review</strong><small>{pendingApprovals.length} pending decisions</small></span><ChevronRight size={14} /></button><button onClick={() => onNavigate("opportunity-engine")}><Target size={16} /><span><strong>Discover</strong><small>Find supported opportunities</small></span><ChevronRight size={14} /></button></section>
+        </aside>
       </section>
 
-      <section className="panel span-4">
-        <PanelHeader icon={<Activity size={17} />} title="Live activity" />
-        <div className="activity-list">
-          {data.activity.slice(0, 7).map((item) => (
-            <div key={item.id}><span /><p>{item.summary}<small>{timeAgo(item.created_at)} · {item.security_level}</small></p></div>
-          ))}
-        </div>
-      </section>
-      <GitHubMaintenance
-        project={project}
-        status={data.integrations.github}
-        connectionStatus={data.plugins.find((item) => item.id === "plugin-github")?.connection_status ?? "not_connected"}
-        governance={governance}
-        onRequest={onGitHub}
-      />
-      <CodexEngineering
-        project={project}
-        status={data.integrations.codex}
-        connectionStatus={data.plugins.find((item) => item.id === "plugin-codex")?.connection_status ?? "not_connected"}
-        onLogin={onCodexLogin}
-        onTask={onCodexTask}
-        onCheck={onCodexCheck}
-      />
+      <form className="executive-command" onSubmit={submit} data-design-region="ask Aegis composer"><span className="executive-avatar executive-avatar--small"><img src="/aegis-avatar.png" alt="" /><i /></span><textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Ask Aegis anything about your business, agents, research, or next move…" rows={2} /><div><span><LockKeyhole size={13} /> Local model first · prompt rewritten before execution</span><button aria-label="Send to Aegis" disabled={sending || !message.trim()}><Send size={16} /></button></div></form>
+
+      <details className="executive-engineering"><summary><TerminalSquare size={16} /> Internal engineering and integrations <ChevronRight size={14} /></summary><div className="dashboard-grid"><GitHubMaintenance project={project} status={data.integrations.github} connectionStatus={data.plugins.find((item) => item.id === "plugin-github")?.connection_status ?? "not_connected"} governance={governance} onRequest={onGitHub} /><CodexEngineering project={project} status={data.integrations.codex} connectionStatus={data.plugins.find((item) => item.id === "plugin-codex")?.connection_status ?? "not_connected"} onLogin={onCodexLogin} onTask={onCodexTask} onCheck={onCodexCheck} /></div></details>
     </div>
   );
 }
@@ -1074,9 +1070,9 @@ function AgentFleet({ data, tab, onTab, onCreate, onPlugin, onPoll, onControl, o
   };
 
   return (
-    <div className="single-workspace">
-      <div className="workspace-intro"><div><div className="eyebrow">SUPERVISED INDEPENDENCE</div><h2>Agents run their business cycles.<br /><span>Aegis protects the system.</span></h2><p>Authenticated local monitoring, capability-level containment, reviewable learning, and rollback without merging agent runtimes.</p></div><Network className="intro-icon" /></div>
-      <div className="fleet-toolbar"><div className="segmented-tabs fleet-tabs">{tabs.map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => onTab(item)}>{item}</button>)}</div><button className="secondary-button" onClick={() => void onPoll()}><RotateCcw size={14} /> Check now</button></div>
+    <div className="single-workspace mission-control-workspace">
+      <div className="mission-control-header"><div><div className="eyebrow"><Network size={13} /> OWNER-ONLY SUPERVISION</div><h2>Mission Control</h2><p>See what every agent is doing, catch abnormal behavior, and intervene without taking over its business cycle.</p></div><div className="mission-control-summary"><span><strong>{data.agent_fleet.length}</strong> connected agents</span><span><strong>{data.agent_incidents.filter((item) => item.status !== "resolved").length}</strong> open incidents</span><span><strong>{data.approvals.filter((item) => item.status === "pending").length}</strong> approvals</span></div></div>
+      <div className="fleet-toolbar"><div className="segmented-tabs fleet-tabs">{tabs.map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => onTab(item)}>{item === "agents" ? "Fleet" : item}</button>)}</div><button className="secondary-button" onClick={() => void onPoll()}><RotateCcw size={14} /> Refresh status</button></div>
 
       {tab === "agents" && <div className="card-grid">{data.agent_fleet.map((agent) => {
         const connected = agent.bridge.last_status !== "offline";
@@ -1108,6 +1104,140 @@ function AgentFleet({ data, tab, onTab, onCreate, onPlugin, onPoll, onControl, o
       {tab === "plugins" && <CardGrid items={data.plugins} render={(plugin) => <PluginCard plugin={plugin} onChange={() => onPlugin(plugin)} />} />}
     </div>
   );
+}
+
+function ExecutivePartnerPopup({ data, project, onClose, onOpenWorkspace, onStartSession, onAddSessionNote, onFinishSession }: {
+  data: Bootstrap;
+  project: Project | null;
+  onClose: () => void;
+  onOpenWorkspace: (workspaceId: string) => void;
+  onStartSession: (payload: Record<string, unknown>) => Promise<void>;
+  onAddSessionNote: (id: string, payload: Record<string, unknown>) => Promise<void>;
+  onFinishSession: (id: string, status: "completed" | "aborted", summary: string) => Promise<void>;
+}) {
+  const activeSession = data.digital_identity.companion_sessions.find((item) => item.status === "active") ?? null;
+  const [purpose, setPurpose] = useState("");
+  const [sessionType, setSessionType] = useState("research");
+  const [privacyMode, setPrivacyMode] = useState("standard");
+  const [screenPreview, setScreenPreview] = useState(false);
+  const [screenFrame, setScreenFrame] = useState<string | null>(null);
+  const [question, setQuestion] = useState("Observe this step and tell me what matters, what may be missing, and what I should do next.");
+  const [analysis, setAnalysis] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const stopSharing = () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setScreenPreview(false);
+    setScreenFrame(null);
+  };
+
+  useEffect(() => {
+    if (screenPreview && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      void videoRef.current.play();
+    }
+  }, [screenPreview]);
+
+  useEffect(() => () => streamRef.current?.getTracks().forEach((track) => track.stop()), []);
+
+  const requestScreen = async () => {
+    if (!navigator.mediaDevices?.getDisplayMedia) throw new Error("Screen sharing is unavailable in this browser");
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    streamRef.current = stream;
+    stream.getVideoTracks()[0]?.addEventListener("ended", stopSharing, { once: true });
+    setScreenPreview(true);
+    setError("");
+  };
+
+  const startSession = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!purpose.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      await requestScreen();
+      await onStartSession({ project_id: project?.id ?? null, session_type: sessionType, privacy_mode: privacyMode, screen_access: "local_preview", purpose: purpose.trim() });
+      setPurpose("");
+    } catch (reason) {
+      stopSharing();
+      setError(reason instanceof Error ? reason.message : "The observation session could not start safely");
+    } finally { setBusy(false); }
+  };
+
+  const captureFrame = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      setError("The shared screen is not ready yet");
+      return;
+    }
+    const scale = Math.min(1, 1280 / video.videoWidth, 720 / video.videoHeight);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) { setError("Screen capture is unavailable"); return; }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    setScreenFrame(canvas.toDataURL("image/jpeg", 0.72));
+    setAnalysis("");
+    setError("");
+  };
+
+  const analyzeFrame = async () => {
+    if (!activeSession || !screenFrame || !question.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await analyzeScreenFrame(activeSession.id, screenFrame, question.trim());
+      setAnalysis(result.analysis);
+      setScreenFrame(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Local observation failed safely");
+    } finally { setBusy(false); }
+  };
+
+  const finish = async (status: "completed" | "aborted") => {
+    if (!activeSession) return;
+    setBusy(true);
+    try {
+      stopSharing();
+      await onFinishSession(activeSession.id, status, analysis && activeSession.privacy_mode === "standard" ? analysis : "");
+      setAnalysis("");
+    } finally { setBusy(false); }
+  };
+
+  const close = () => {
+    stopSharing();
+    onClose();
+  };
+
+  return <div className="executive-partner-backdrop" role="dialog" aria-modal="true" aria-label="Aegis Executive Partner" onMouseDown={close}>
+    <aside className="executive-partner-popup" onMouseDown={(event) => event.stopPropagation()}>
+      <header><div className="executive-partner-popup__identity"><span className="executive-avatar"><img src="/aegis-avatar.png" alt="Aegis" /><i /></span><div><div className="eyebrow">OWNER-CONTROLLED COMPANION</div><h2>Aegis Executive Partner</h2><p>{activeSession ? `${activeSession.session_type} session active` : "Ask, observe, learn, and think together."}</p></div></div><button className="icon-button" onClick={close} aria-label="Close Executive Partner"><X size={18} /></button></header>
+
+      {!activeSession ? <form className="partner-start" onSubmit={startSession}>
+        <div className="partner-mode-row"><button type="button" className={sessionType === "research" ? "active" : ""} onClick={() => setSessionType("research")}><Search size={15} /> Research</button><button type="button" className={sessionType === "study" ? "active" : ""} onClick={() => setSessionType("study")}><BrainCircuit size={15} /> Study</button><button type="button" className={sessionType === "task" ? "active" : ""} onClick={() => setSessionType("task")}><Workflow size={15} /> Task</button></div>
+        <label>What should Aegis observe?<textarea required value={purpose} onChange={(event) => setPurpose(event.target.value)} placeholder="Example: Watch while I compare these sources and point out weak evidence, missing questions, and the best next step." /></label>
+        <label>Privacy<select value={privacyMode} onChange={(event) => setPrivacyMode(event.target.value)}><option value="standard">Standard · encrypted notes only when requested</option><option value="private_incognito">Incognito · metadata only, no notes or learning</option></select></label>
+        <div className="partner-consent"><ShieldCheck size={18} /><p>You choose a screen, window, or tab in the browser prompt. Sharing is visible, contains no audio, and can be stopped at any time.</p></div>
+        <button className="primary-button" disabled={busy || !purpose.trim()}><ScanEye size={16} /> {busy ? "Requesting permission…" : "Start guided observation"}</button>
+      </form> : <div className="partner-session">
+        <div className="partner-session__status"><StatusPill tone={activeSession.privacy_mode === "private_incognito" ? "warning" : "safe"}><span className="live-dot" /> Session active</StatusPill><span>{activeSession.purpose || "Purpose hidden by incognito policy"}</span></div>
+        {screenPreview ? <video ref={videoRef} muted playsInline className="partner-screen-preview" /> : <div className="partner-screen-empty"><AppWindow size={30} /><strong>No screen is currently shared</strong><button className="secondary-button" onClick={() => void requestScreen().catch((reason) => setError(reason instanceof Error ? reason.message : "Screen sharing was not granted"))}>Share a screen or window</button></div>}
+        <div className="partner-privacy-row"><span><LockKeyhole size={12} /> Local analysis</span><span><Square size={12} /> No recording</span><span><ScanEye size={12} /> One frame per click</span></div>
+        {screenPreview && !screenFrame && <button className="primary-button full-width" onClick={captureFrame}><ScanEye size={16} /> Observe this step</button>}
+        {screenFrame && <section className="partner-frame"><img src={screenFrame} alt="Selected screen frame awaiting analysis" /><label>What should Aegis focus on?<textarea value={question} onChange={(event) => setQuestion(event.target.value)} /></label><div><button onClick={() => setScreenFrame(null)}>Discard</button><button className="primary-button" disabled={busy || !question.trim()} onClick={() => void analyzeFrame()}>{busy ? "Analyzing locally…" : "Analyze this frame"}</button></div></section>}
+        {analysis && <section className="partner-analysis"><div><StatusPill tone="safe">Raw frame discarded</StatusPill><small>Local vision analysis</small></div><p>{analysis}</p>{activeSession.privacy_mode === "standard" && <button className="secondary-button" onClick={() => void onAddSessionNote(activeSession.id, { content: `Screen analysis: ${analysis}`, learning_candidate: false }).then(() => setAnalysis(""))}>Save as encrypted note</button>}</section>}
+        <div className="partner-session__actions"><button className="secondary-button" onClick={() => onOpenWorkspace("aegis-hub")}>Open full companion</button><button disabled={busy} onClick={() => void finish("aborted")}>Abort</button><button className="primary-button" disabled={busy} onClick={() => void finish("completed")}>Complete session</button></div>
+      </div>}
+      {error && <div className="partner-error"><ShieldCheck size={16} />{error}</div>}
+      <footer><button onClick={() => onOpenWorkspace("ai-workspace")}><MessageSquareText size={14} /> Open AI Workspace</button><span>{data.digital_identity.screen_companion.available ? `${data.digital_identity.screen_companion.model} ready` : "Local vision unavailable"}</span></footer>
+    </aside>
+  </div>;
 }
 
 function WorkspaceSearch({ onClose }: { onClose: () => void }) {

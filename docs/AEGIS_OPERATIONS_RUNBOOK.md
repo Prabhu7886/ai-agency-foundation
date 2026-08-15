@@ -1,6 +1,6 @@
 # Aegis MVP Operations Runbook
 
-Verified for Aegis 0.11.0 on 2026-08-14.
+Verified for Aegis 0.11.0 on 2026-08-15.
 
 ## Start and verify
 
@@ -25,9 +25,9 @@ Bridge endpoints require their local bearer tokens. Use the dashboard instead of
 
 ## Latest acceptance evidence
 
-Verified on 2026-08-14:
+Verified on 2026-08-15:
 
-- Aegis backend: 60 tests passed.
+- Aegis backend: 61 tests passed, including independent agent-data and supervision-key separation.
 - Commerce Agent: 23 tests passed; encrypted SQLCipher storage and 17 collections verified during launch.
 - Career Studio: 17 tests passed; the sidebar status-rendering defect was corrected and browser-retested.
 - Aegis frontend: TypeScript and production Vite build passed.
@@ -36,7 +36,9 @@ Verified on 2026-08-14:
 - Local vision: `gemma3:4b` completed a real image inference, discarded the raw frame, and unloaded after the request.
 - Ollama containment: both outbound-block rules enabled, no external Ollama connections, and no model left occupying VRAM after validation.
 - Desktop access: three dashboard shortcuts and one bounded all-dashboard launcher validated under the owner's Desktop folder.
-- Interface system (2026-08-15): Aegis, Commerce, and Career share the dark/cyan/gold local design language; all three rendered without browser console errors. Aegis Design Edit Mode selected a real page region, preserved its workspace context, previewed the rewritten engineering request, and stopped before Approval Center submission during acceptance testing.
+- Interface system: Aegis uses a decision-first Executive Home, four-mode AI Workspace, Mission Control, and global Executive Partner popup. Commerce uses Command Center, Visual Studio, Operations, Intelligence, and AI Assistant. Career uses Career Journey, Application Board, Resume Studio, AI Coach, and Intelligence & Settings. All three rendered successfully with their current light product surfaces.
+- Companion audit: `gemma3:4b` is ready; browser permission is required each session; no audio or recording is requested; one owner-triggered frame is analyzed locally and discarded. See `docs/LAPTOP_COMPANION_SECURITY_AUDIT.md`.
+- Runtime isolation: Commerce and Career use separate encrypted data roots. Agent Bridge authentication uses the local protected Aegis supervision environment without embedding or copying the key into source or agent data.
 
 ## World Pulse schedules
 
@@ -67,6 +69,10 @@ Keep the encryption master key in an independent trusted password manager. A bac
 ## Voice privacy
 
 Voice is local-only. The service exposes idle, processing, and speaking states and supports interruption. Raw captured audio is deleted after local transcription. Transcripts follow the encrypted conversation-retention policy. Do not enable always-listening behavior for the MVP.
+
+## Laptop companion privacy
+
+Use the Executive Partner button from any Aegis workspace or open the full Companion tab in Aegis Hub. State a purpose, choose standard or private incognito, and select a screen, window, or browser tab in the permission prompt. The current engine never watches automatically: use **Observe this step** to capture one frame for local analysis. Stop sharing before exposing passwords, private messages, financial data, or unrelated windows. Continuous observation remains disabled until a separate policy is approved.
 
 ## Known boundaries
 

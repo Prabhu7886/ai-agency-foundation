@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import hmac
 import os
@@ -16,6 +17,7 @@ import requests
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
+from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -26,6 +28,22 @@ from utils.encryption import KeyManager
 
 
 CONTRACT_VERSION = "1.0"
+
+
+def bridge_master_key() -> bytes:
+    """Load the supervision transport key without changing the agent data key."""
+    auth_env = os.getenv("AEGIS_BRIDGE_AUTH_ENV_PATH", "").strip()
+    if not auth_env:
+        return KeyManager().master_key()
+    env_path = Path(auth_env).expanduser().resolve(strict=True)
+    encoded = str(dotenv_values(env_path).get(KeyManager.ENV_NAME, "")).strip()
+    try:
+        key = base64.urlsafe_b64decode(encoded.encode("ascii"))
+    except (ValueError, UnicodeEncodeError) as exc:
+        raise RuntimeError("The Agent Bridge authentication key is invalid") from exc
+    if len(key) != 32:
+        raise RuntimeError("The Agent Bridge authentication key must decode to 32 bytes")
+    return key
 
 
 def utc_now() -> str:
@@ -267,7 +285,7 @@ def create_app(kind: str) -> FastAPI:
         if not request.client or request.client.host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
             raise HTTPException(status_code=403, detail="Agent Bridge accepts loopback clients only")
         expected = hmac.new(
-            KeyManager().master_key(),
+            bridge_master_key(),
             f"agent-bridge-v1:{runtime.agent_id}".encode(),
             hashlib.sha256,
         ).hexdigest()
