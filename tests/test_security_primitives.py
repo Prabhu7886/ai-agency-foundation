@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -102,13 +103,18 @@ def test_ollama_firewall_requires_fresh_protected_attestation(
         encoding="utf-8",
     )
     monkeypatch.setenv("AI_AGENCY_BITLOCKER_ATTESTATION", str(attestation))
-    assert SystemMonitor.ollama_firewall_status()["verified"] is True
+    assert SystemMonitor._read_ollama_firewall_attestation(attestation)["verified"] is True
+    platform_status = SystemMonitor.ollama_firewall_status()
+    if os.name == "nt":
+        assert platform_status["verified"] is True
+    else:
+        assert platform_status == {"verified": False, "mode": "unsupported", "source": "Windows-only control"}
 
     payload = json.loads(attestation.read_text(encoding="utf-8"))
     payload["ollama_firewall"]["mode"] = "maintenance-or-unconfigured"
     payload["ollama_firewall"]["verified"] = False
     attestation.write_text(json.dumps(payload), encoding="utf-8")
-    assert SystemMonitor.ollama_firewall_status()["verified"] is False
+    assert SystemMonitor._read_ollama_firewall_attestation(attestation)["verified"] is False
 
 
 def test_scheduler_requires_security_validation() -> None:

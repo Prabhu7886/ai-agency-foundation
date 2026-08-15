@@ -179,6 +179,11 @@ class SystemMonitor:
                 str(program_data / "AI_Agency" / "Security" / "bitlocker_attestation.json"),
             )
         )
+        return SystemMonitor._read_ollama_firewall_attestation(attestation_path)
+
+    @staticmethod
+    def _read_ollama_firewall_attestation(attestation_path: Path) -> dict[str, Any]:
+        """Validate a firewall attestation without bypassing platform enforcement."""
         try:
             attestation = json.loads(attestation_path.read_text(encoding="utf-8-sig"))
             checked_at = datetime.fromisoformat(str(attestation["checked_at"]).replace("Z", "+00:00"))

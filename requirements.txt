@@ -7,7 +7,7 @@ sqlcipher3==0.6.2
 ollama==0.6.2
 requests==2.34.2
 beautifulsoup4==4.15.0
-duckduckgo-search==8.1.1
+ddgs==9.14.4
 pandas==3.0.5
 plotly==6.9.0
 python-dotenv==1.2.2

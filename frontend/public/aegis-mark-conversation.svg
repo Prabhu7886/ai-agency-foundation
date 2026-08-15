@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Aegis Conversation Pulse">
+  <defs>
+    <linearGradient id="pulse-cyan" x1="10" y1="14" x2="54" y2="50" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#2dd4bf"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#080d16"/>
+  <path d="M13 25v-5c0-4 3-7 7-7h22" fill="none" stroke="url(#pulse-cyan)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M51 39v5c0 4-3 7-7 7H22" fill="none" stroke="url(#pulse-cyan)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M17 34h4m5-7v14m6-19v24m6-16v8m6-13v20m6-11h3" fill="none" stroke="url(#pulse-cyan)" stroke-width="4" stroke-linecap="round"/>
+  <path d="M46 14h4" fill="none" stroke="#f6c453" stroke-width="4" stroke-linecap="round"/>
+</svg>

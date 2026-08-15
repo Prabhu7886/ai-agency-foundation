@@ -34,10 +34,28 @@ jobs:
           python -m pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Compile source
-        run: python -m compileall -q agents dashboard databases knowledge_pipeline tools utils run_agency.py
+        run: python -m compileall -q aegis_core agents dashboard databases knowledge_pipeline tools utils run_agency.py
 
       - name: Run tests
         run: python -m pytest -q
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Build Aegis dashboard
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
 
       - name: Audit dependencies
         run: python -m pip_audit --progress-spinner off --ignore-vuln PYSEC-2026-311

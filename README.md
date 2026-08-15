@@ -10,7 +10,7 @@ Aegis is a local-first AI agency orchestrator, security guardian, intelligence o
 - ChromaDB must reside on an encrypted filesystem volume. On Windows, the startup audit verifies BitLocker.
 - ChromaDB runs embedded only; its HTTP server is prohibited. See `SECURITY.md` for the narrowly scoped `CVE-2026-45829` mitigation.
 - The local hash embedding function does not download a model or emit telemetry.
-- External research is disabled by default. An approved research session requires `AI_AGENCY_OFFLINE_MODE=false`.
+- External research is disabled by default. A consumed, single-use approval can open only the bounded public-research adapter while global offline mode stays enabled.
 - Public research queries reject common client-data and secret patterns; outbound destinations are logged.
 - Telegram requires a numeric user-ID whitelist. Deployment and shutdown require a short-lived confirmation code.
 - Security controls are evidence-based. The dashboard and audit logs distinguish configured controls from verified controls.
@@ -90,6 +90,71 @@ python -m pip_audit --progress-spinner off --ignore-vuln PYSEC-2026-311
 
 ## Running
 
+### Aegis executive workspace
+
+Build the local React interface once after installing a current Node.js release and pnpm:
+
+```powershell
+cd frontend
+pnpm install --frozen-lockfile
+pnpm run build
+cd ..
+```
+
+Start the FastAPI control plane and built interface on loopback only:
+
+```powershell
+python run_aegis.py
+```
+
+Or start Aegis plus both independent agent supervision bridges with the guarded Windows launcher:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\windows\start_aegis_stack.ps1
+```
+
+To start Aegis and both independent dashboards after a reboot, use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\windows\start_all_dashboards.ps1
+```
+
+The dashboards are available at `127.0.0.1:8000` (Aegis), `127.0.0.1:8501` (Commerce), and `127.0.0.1:8502` (Career Studio).
+
+The launcher reuses healthy listeners, starts missing processes hidden, and deliberately does not start Ollama. Ollama remains subject to the controlled-maintenance policy.
+
+Open `http://127.0.0.1:8000`. The workspace provides Executive Home, AI Workspace, Agent Fleet, World Pulse, Opportunity Engine, Solution Factory, Approval Center, Security Sentinel, Aegis Hub, and Data Lab. Aegis Hub contains the encrypted owner-controlled digital identity, locked portrait and full-body assets, consented single-frame screen understanding, a browser-animated avatar preview, private local voice, Aegis Academy course plans, and visible controlled-learning ledgers. AI Workspace includes private incognito turns that create no conversation, task, prompt, memory, or learning record. Response feedback becomes an encrypted training candidate and changes Aegis only after owner review. Approval Center separates Security & Operations from Business & Creative decisions while preserving one single-use audit trail.
+
+Use **Edit design** in the Aegis command bar to select a visible interface section and describe an improvement. Aegis previews a bounded rewritten engineering request and sends it to Approval Center. The runtime never edits or deploys its own source silently; approved work still uses the registered Codex project boundary, tests, a production build, and browser verification.
+
+Screen understanding uses `gemma3:4b` through loopback Ollama. Aegis captures no continuous video: the owner clicks to capture one downscaled frame, the backend validates it, analyzes it in memory, unloads the vision model, and discards the raw frame. The text analysis is retained only when the owner explicitly saves it as an encrypted companion note. If the model is absent, the dashboard reports the feature unavailable instead of falling back to a cloud or text-only model. Install the model only during the controlled Ollama maintenance window described above:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" pull gemma3:4b
+```
+
+Commerce and Career Studio remain independent applications. Start their authenticated loopback supervision bridges separately so Aegis can monitor them without owning their lifecycle:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\windows\start_agent_bridges.ps1
+```
+
+Agent Fleet then displays sanitized actual health, task outcomes and duration, progress, domain metrics, approvals, skills, incidents, containment drills, and learning history. It never imports resume content, customer records, credentials, or private task payloads. See `docs/AGENT_FLEET_OPERATIONS.md` for containment thresholds and the recovery drill.
+
+World Pulse organizes approved public research by niche, runs owner-configured schedules as approval requests, and searches approved public sources in dedicated lanes before opening saved briefs internally. Opportunity Engine can run recurring local discovery over stored evidence and hand a validation candidate to Solution Factory, where every evidence-backed transition returns to Business & Creative approvals. External course-platform and social-media credentials remain disconnected until the owner explicitly approves an official integration.
+
+Every executable user request passes through the Aegis prompt compiler first. Aegis keeps the original prompt, produces a bounded execution contract, classifies data and risk, states required approvals and success evidence, and never lets rewriting expand the user's authority. If Ollama is unavailable, a conservative deterministic compiler is used. AI chat routes each turn by content: Llama handles general executive conversation, DeepSeek Coder handles implementation work, and Qwen handles research, data, and strategic analysis. A one-model-at-a-time lock unloads the previous Ollama model before switching; models above the configured VRAM cap are labeled as hybrid GPU/RAM workloads in the interface.
+
+Engineering integrations are deliberately narrow. GitHub supports authentication attestation, `codex/` branch creation, explicit-file staging, commits, pushes, and draft pull requests on the registered repository; every operation is single-use and approval-gated. Merge, delete, force-push, arbitrary shell, and unregistered repositories are unavailable. The Codex integration uses the official local `codex app-server` JSONL protocol, Codex-managed ChatGPT authentication, a registered workspace root, network-disabled turns, and a separate approval for every coding request. World Pulse stores source tier, retrieval time, full-page verification state, publication-date provenance, methodology signals, and confidence. Opportunity reports group related claims across independent domains, preserve possible numeric conflicts, and withhold the strongest discovery gate until unresolved conflicts are cleared.
+
+Data Lab currently accepts CSV files up to 50 MB inside a registered project. It hashes the approved input, writes a new cleaned copy under `exports/aegis-data`, and records a QA/provenance report without overwriting raw data. Voice Lounge uses Windows SAPI for local speech output; install `faster-whisper` separately to enable local speech-to-text. Audio is never sent to a cloud speech provider and temporary recordings are deleted after transcription.
+
+Set `AEGIS_PROJECT_ROOTS` to a semicolon-separated list of additional absolute project roots when Aegis needs to register code outside `AI_AGENCY_HOME`. The API refuses non-loopback clients and remote Ollama endpoints. With `AI_AGENCY_OFFLINE_MODE=true`, only a consumed Approval Center record can activate the bounded public-research or GitHub-maintenance adapter; it does not disable global offline mode.
+
+See `docs/AEGIS_ARCHITECTURE.md` for boundaries, integration policy, and the implementation roadmap. Brand assets and logo directions are in `docs/brand/`.
+
+### Existing command center and scheduler
+
 Start the command center:
 
 ```powershell
@@ -110,6 +175,9 @@ The runtime performs a startup audit and stops if a critical control fails. Dail
 - `knowledge_pipeline/pipeline.py`: protected memory, clearance-aware retrieval, media learning, repository and product analysis.
 - `agents/base_agent.py`: local Ollama inference, client isolation, research, metrics, security context.
 - `agents/orchestrator.py`: Aegis orchestration, strategy, security response, intelligence, revenue, and mobile routing.
+- `aegis_core/api.py`: local-only FastAPI control plane and approval-gated operations.
+- `aegis_core/store.py`: encrypted project, task, agent, skill, plugin, and approval registry.
+- `frontend/`: Codex-style React executive workspace.
 - `agents/security/auditor.py`: daily evidence-based security checks and audit records.
 - `tools/mobile_commander.py`: whitelist-only Telegram commands and alerts.
 - `tools/intelligence_briefing.py`: public-source AI, competitor, and revenue intelligence.
