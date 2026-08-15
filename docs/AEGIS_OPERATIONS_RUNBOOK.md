@@ -36,6 +36,7 @@ Verified on 2026-08-14:
 - Local vision: `gemma3:4b` completed a real image inference, discarded the raw frame, and unloaded after the request.
 - Ollama containment: both outbound-block rules enabled, no external Ollama connections, and no model left occupying VRAM after validation.
 - Desktop access: three dashboard shortcuts and one bounded all-dashboard launcher validated under the owner's Desktop folder.
+- Interface system (2026-08-15): Aegis, Commerce, and Career share the dark/cyan/gold local design language; all three rendered without browser console errors. Aegis Design Edit Mode selected a real page region, preserved its workspace context, previewed the rewritten engineering request, and stopped before Approval Center submission during acceptance testing.
 
 ## World Pulse schedules
 

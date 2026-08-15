@@ -94,6 +94,28 @@ The Aegis layer keeps these inherited controls active:
 - API documentation is disabled unless `AEGIS_ENABLE_API_DOCS=true`.
 - Voice is push-to-talk and local-only; the MVP does not upload or claim to transcribe audio.
 
+## Owner-directed interface editing
+
+Design Edit Mode lets the owner select a registered visual region in the Aegis React workspace and describe the desired change in plain language. The browser records a bounded region label and workspace identifier, not a screenshot or arbitrary DOM payload. Aegis creates a constrained engineering request that preserves current behavior, data, security boundaries, accessibility, responsiveness, and brand identity.
+
+```text
+Owner enables Design Edit Mode
+        |
+        v
+Select registered interface region
+        |
+        v
+Describe requested improvement
+        |
+        v
+Preview bounded rewritten request
+        |
+        v
+Approval Center -> controlled Codex task -> tests/build/browser evidence
+```
+
+Selection is not authority. The runtime does not directly edit source files, execute arbitrary prompts, bypass approval, or deploy unverified code.
+
 ## Model and integration policy
 
 Local models own routine planning, analysis, private project context, and agent execution. Cloud specialists are exception paths for approved public or redacted work when they materially improve the result.

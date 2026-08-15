@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AppWindow,
@@ -23,15 +23,16 @@ import {
   Menu,
   MessageSquareText,
   Mic,
+  MousePointer2,
   Network,
   PackagePlus,
+  Paintbrush,
   PanelLeftClose,
   Plus,
   Radar,
   RotateCcw,
   Search,
   Send,
-  Settings2,
   ShieldCheck,
   Sparkles,
   Square,
@@ -171,6 +172,9 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [codexLogin, setCodexLogin] = useState<{ verificationUrl: string; userCode: string } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [designMode, setDesignMode] = useState(false);
+  const [designSelection, setDesignSelection] = useState<{ label: string; region: string; workspace: string } | null>(null);
+  const selectedDesignElement = useRef<HTMLElement | null>(null);
 
   const refresh = async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -196,11 +200,51 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  useEffect(() => {
+    selectedDesignElement.current?.removeAttribute("data-design-selected");
+    selectedDesignElement.current = null;
+    setDesignSelection(null);
+  }, [activeWorkspace]);
+
+  useEffect(() => () => selectedDesignElement.current?.removeAttribute("data-design-selected"), []);
+
   const selectedProject = useMemo(
     () => data?.projects.find((project) => project.id === selectedProjectId) ?? data?.projects[0] ?? null,
     [data, selectedProjectId],
   );
   const workspace = data?.workspaces.find((item) => item.id === activeWorkspace);
+
+  const closeDesignMode = () => {
+    selectedDesignElement.current?.removeAttribute("data-design-selected");
+    selectedDesignElement.current = null;
+    setDesignSelection(null);
+    setDesignMode(false);
+  };
+
+  const selectDesignRegion = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!designMode) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("[data-design-editor]")) return;
+    const region = target.closest<HTMLElement>(
+      "[data-design-region], .hero-card, .panel, .metric-card, .entity-card, .workspace-intro, .ai-workspace, .research-bar, .allocation-panel, .hub-hero",
+    );
+    if (!region) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectedDesignElement.current?.removeAttribute("data-design-selected");
+    region.setAttribute("data-design-selected", "true");
+    selectedDesignElement.current = region;
+    const headingElement = region.querySelector<HTMLElement>("h1, h2, h3, strong");
+    const heading = headingElement?.innerText?.replace(/\s+/g, " ").trim();
+    const regionName = region.dataset.designRegion
+      ?? Array.from(region.classList).find((item) => !item.startsWith("span-"))
+      ?? region.tagName.toLowerCase();
+    setDesignSelection({
+      label: heading?.slice(0, 90) || workspace?.label || "Selected interface region",
+      region: regionName,
+      workspace: workspace?.label || activeWorkspace,
+    });
+  };
 
   const mutate = async (operation: () => Promise<unknown>, success: string) => {
     setBusy(true);
@@ -289,8 +333,8 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell ${sidebarOpen ? "" : "app-shell--collapsed"}`}>
-      <aside className="sidebar">
+    <div className={`app-shell ${sidebarOpen ? "" : "app-shell--collapsed"} ${designMode ? "app-shell--design-mode" : ""}`} onClickCapture={selectDesignRegion}>
+      <aside className="sidebar" data-design-region="workspace navigation">
         <div className="sidebar__brand">
           <BrandMark compact={!sidebarOpen} />
           <button className="icon-button collapse-button" onClick={() => setSidebarOpen((value) => !value)} aria-label="Toggle sidebar">
@@ -345,7 +389,7 @@ export default function App() {
       </aside>
 
       <main className="main-stage">
-        <header className="topbar">
+        <header className="topbar" data-design-region="workspace command bar">
           <button className="icon-button mobile-menu" onClick={() => setSidebarOpen((value) => !value)}><Menu size={18} /></button>
           <div>
             <div className="eyebrow">AEGIS / {selectedProject?.name ?? "NO PROJECT"}</div>
@@ -354,11 +398,19 @@ export default function App() {
           <div className="topbar__actions">
             <StatusPill tone="safe"><LockKeyhole size={12} /> Local only</StatusPill>
             <button className="icon-button" title="Search this workspace" onClick={() => setSearchOpen(true)}><Search size={17} /></button>
-            <button className="icon-button" title="Workspace settings"><Settings2 size={17} /></button>
+            <button
+              className={`design-mode-toggle ${designMode ? "active" : ""}`}
+              data-design-editor
+              title="Select an interface region and propose a change"
+              onClick={() => designMode ? closeDesignMode() : setDesignMode(true)}
+            >
+              {designMode ? <MousePointer2 size={15} /> : <Paintbrush size={15} />}
+              <span>{designMode ? "Select a section" : "Edit design"}</span>
+            </button>
           </div>
         </header>
 
-        <section className="workspace-stage">
+        <section className="workspace-stage" data-design-region={`${workspace?.label ?? activeWorkspace} workspace`}>
           {activeWorkspace === "executive-home" && (
             <ExecutiveHome
               data={data}
@@ -418,6 +470,20 @@ export default function App() {
           {activeWorkspace === "data-lab" && <DataLab project={selectedProject} onRequest={(payload) => mutate(() => requestDataJob(payload), "Data cleaning plan sent to Approval Center")} />}
         </section>
       </main>
+
+      {designMode && (
+        <DesignStudio
+          selection={designSelection}
+          project={selectedProject}
+          busy={busy}
+          onClose={closeDesignMode}
+          onSubmit={async (prompt) => {
+            if (!selectedProject) return;
+            await mutate(() => requestCodexTask(selectedProject.id, prompt), "Design change rewritten and sent to Approval Center");
+            closeDesignMode();
+          }}
+        />
+      )}
 
       {createMode && (
         <CreatePanel
@@ -936,6 +1002,47 @@ type FleetTab = "agents" | "performance" | "tasks" | "skills" | "security" | "le
 function fleetTone(agent: IndependentAgent) {
   if (agent.snapshot.controls?.quarantined || agent.open_incidents > 0) return "warning";
   return agent.bridge.last_status === "healthy" || agent.bridge.last_status === "degraded" ? "safe" : "neutral";
+}
+
+function DesignStudio({ selection, project, busy, onClose, onSubmit }: {
+  selection: { label: string; region: string; workspace: string } | null;
+  project: Project | null;
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (prompt: string) => Promise<void>;
+}) {
+  const [instruction, setInstruction] = useState("");
+  const [showContract, setShowContract] = useState(false);
+  const compiled = selection && instruction.trim()
+    ? `Improve the Aegis interface region "${selection.label}" (${selection.region}) inside ${selection.workspace}. Owner direction: ${instruction.trim()} Preserve all current data, behavior, security boundaries, accessibility, responsive layouts, and the Aegis dark/cyan/gold identity. Modify only the smallest relevant frontend files, rebuild the production interface, run tests, and provide browser evidence. Do not change permissions, backend authority, secrets, or unrelated regions.`
+    : "";
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!compiled || busy) return;
+    await onSubmit(compiled);
+  };
+
+  return (
+    <aside className="design-studio" data-design-editor role="dialog" aria-label="Aegis Design Studio">
+      <header>
+        <div><span className="design-studio__signal"><Sparkles size={13} /> LIVE DESIGN MODE</span><h2>Aegis Design Studio</h2></div>
+        <button className="icon-button" onClick={onClose} aria-label="Close design mode"><X size={16} /></button>
+      </header>
+      <div className="design-studio__steps"><span className={selection ? "done" : "active"}><b>01</b>Select</span><span className={selection && !instruction ? "active" : instruction ? "done" : ""}><b>02</b>Describe</span><span><b>03</b>Approve</span></div>
+      <section className={`design-target ${selection ? "selected" : ""}`}>
+        <MousePointer2 size={17} />
+        <div><small>Selected interface region</small><strong>{selection?.label ?? "Click any highlighted section"}</strong>{selection && <code>{selection.workspace} / {selection.region}</code>}</div>
+      </section>
+      <form onSubmit={submit}>
+        <label>What should change?<textarea rows={5} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="Example: Make this section easier to scan, add clearer actions, and show the most important metric first." /></label>
+        <button type="button" className="design-contract-toggle" disabled={!compiled} onClick={() => setShowContract((value) => !value)}><Sparkles size={13} /> {showContract ? "Hide" : "Preview"} rewritten build request</button>
+        {showContract && compiled && <pre className="design-contract">{compiled}</pre>}
+        <div className="design-studio__policy"><ShieldCheck size={16} /><span>Aegis rewrites the request first. Code changes require your Approval Center decision and remain limited to the registered project.</span></div>
+        <button className="primary-button design-submit" disabled={!project || !compiled || busy}>{busy ? "Preparing request…" : "Send to Approval Center"}<ChevronRight size={15} /></button>
+      </form>
+    </aside>
+  );
 }
 
 function AgentFleet({ data, tab, onTab, onCreate, onPlugin, onPoll, onControl, onLearning, onRollback, onResolve, onDrill }: {

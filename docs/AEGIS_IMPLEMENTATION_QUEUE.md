@@ -18,6 +18,19 @@ The queue follows the approved order. Only one major workstream should be marked
 | 11 | Conversational learning | IMPLEMENTED | Natural low-risk prompt wrapper, encrypted ratings/corrections, owner-reviewed training candidates | Collect real owner feedback; do not fine-tune automatically |
 | 12 | Digital embodiment | PARTIAL | Full-body identity and browser idle/listening/speaking motion preview | Choose layered 2D asset or evaluate offline renderer before true lip sync |
 
+## Forward operating queue
+
+| Priority | Workstream | State | Next completion gate |
+|---:|---|---|---|
+| 1 | Unified futuristic interface and owner-directed Design Edit Mode | COMPLETE FOR LOCAL MVP | Continue real-use feedback; every selected-region change remains rewritten and approval-gated |
+| 2 | Business iPhone notification channel | NEXT | Connect the dedicated phone, choose the first channel, verify device ownership, and test outbound-only alerts before interactive approvals |
+| 3 | Independent-agent GitHub and restart hardening | QUEUED | Preserve Commerce and Career on independent branches, add managed lifecycle evidence, and pass reboot/reconnection drills |
+| 4 | Aegis conversational evaluation and training records | QUEUED | Collect representative owner ratings, corrections, and regression prompts before any fine-tuning decision |
+| 5 | Executive notification and reporting policy | QUEUED | Configure immediate incidents, approval alerts, daily briefs, and weekly operating reviews |
+| 6 | Supervised real-world pilots | QUEUED | Complete one Commerce research-to-approval cycle and one Career resume-to-interview cycle with privacy evidence |
+| 7 | Smart Hybrid API routing | OWNER-DEFERRED | Resume with secure Platform authentication, a $10 ceiling, redaction, local fallback, and cost evidence |
+| 8 | Final branding and digital embodiment | QUEUED | Revisit primary logo J and backup F, then evaluate a layered avatar asset before true lip sync or public media production |
+
 ## Agent Fleet integration contract
 
 Every specialist agent connected to Aegis must implement the same bounded contract:

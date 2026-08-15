@@ -1,6 +1,6 @@
 # Aegis Capability Status
 
-Last verified: 2026-08-14 - Aegis 0.11.0
+Last verified: 2026-08-15 - Aegis 0.11.0
 
 This document separates working software from foundations, placeholders, and future intent. A capability is not called operational unless it has an implemented path and verification evidence.
 
@@ -19,6 +19,7 @@ This document separates working software from foundations, placeholders, and fut
 | Data Lab | Reversible CSV cleaning plans and approved clean-copy execution | Current operations are bounded to trimming, null normalization, and deduplication |
 | Security Sentinel | Foundation status, secret-pattern scanning, risky-code checks, dependency posture, encrypted-backup approval flow, manifest verification, and non-destructive restore drills | A successful drill proves the selected backup can be decrypted and hash-verified; it is not a full disaster-recovery guarantee |
 | Workspace operations | Dashboard-wide local search, hidden stack launcher, all-dashboard launcher, operations status, and controlled backup/recovery actions | The launchers do not auto-start Ollama and every application remains loopback-only |
+| Interface system | Shared futuristic Aegis visual language across Executive, Commerce, and Career dashboards; responsive interaction states; and selection-based Design Edit Mode | A selected-region request is rewritten and sent to the existing Codex approval path; Aegis cannot silently or autonomously rewrite its interface |
 
 ## Not operational yet
 
@@ -29,6 +30,7 @@ This document separates working software from foundations, placeholders, and fut
 - Business-phone notifications and long-duration reliability certification.
 - Direct Aegis task dispatch into specialist agents. Live supervision is operational, but Aegis does not yet initiate their domain work.
 - Production deployment or multi-user access; Aegis remains an owner-operated loopback application.
+- Unattended self-modifying UI. Design Edit Mode prepares bounded engineering work; owner approval, tests, a production build, and browser evidence are still required.
 
 ## Truth rule
 
